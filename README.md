@@ -62,6 +62,38 @@ La primera vez que arranca genera su propia identidad (llaves RSA + certificado 
 autofirmado) en `data/identity/` y la reutiliza en corridas siguientes. La base de datos de
 pruebas (H2) vive en `data/banxicosim.mv.db`.
 
+## Correr con Docker (recomendado)
+
+Evita instalar JDK/Maven en el host — el `Dockerfile` es un build multi-etapa que compila el
+proyecto adentro (a diferencia de los Dockerfile de judeca/minos/radamanto, que asumen `mvn clean
+install` ya corrido en el host), así que `docker compose up` es el único paso.
+
+```bash
+cp config/simulator.properties.example config/simulator.properties
+# coloca el certificado real de tu instancia de minos en config/minos-public-cert.pem (ver arriba)
+docker compose up --build
+```
+
+`config/` y `data/` quedan montados como bind mounts (no volúmenes nombrados) a propósito:
+`config/` es donde tú colocas `minos-public-cert.pem` a mano, y `data/` es donde puedes inspeccionar
+`banxicosim.mv.db` con cualquier cliente H2 sin entrar al contenedor. Puertos expuestos: `6001`
+(SPEI), `6002` (ARA), `8089` (API de control — ver abajo). El `Dockerfile` incluye un
+`HEALTHCHECK` contra `GET /health`.
+
+**Portabilidad — variables de entorno.** Cualquier clave de `simulator.properties` se puede
+sobreescribir con una variable de entorno del mismo nombre en mayúsculas y puntos por guión bajo
+(p. ej. `spei.port` &rarr; `SPEI_PORT`, `minos.entityCode` &rarr; `MINOS_ENTITY_CODE`) — ver
+`SimConfig.applyEnvironmentOverrides` y los ejemplos comentados en `docker-compose.yml`. Sirve
+para correr el simulador en otra máquina o en CI sin tener que montar un archivo solo para cambiar
+un puerto; la única pieza que sigue necesitando un archivo montado es `minos-public-cert.pem`
+(es contenido binario/PEM, no un valor de una sola línea).
+
+**Los comandos de consola (`abono`, `abono-invalido`, `salir`) necesitan stdin interactivo**, que
+no existe en un contenedor corrido en segundo plano (`docker compose up -d`). Ahí, dispara esos
+mismos escenarios con la API de control HTTP (`POST /abonos/validos`, `POST /abonos/invalidos` —
+ver la sección de abajo y `httpclient/02-abonos.http`); el simulador funciona igual sin la
+consola, solo pierdes esa vía de disparo manual.
+
 ## Apuntar una instancia de minos en pruebas hacia el simulador
 
 minos es quien abre la conexión hacia afuera en ambos sockets (nunca al revés) — ver

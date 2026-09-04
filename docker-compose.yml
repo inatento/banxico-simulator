@@ -1,0 +1,25 @@
+# Levanta el simulador con un solo comando: `docker compose up --build`.
+#
+# config/ y data/ se montan como bind mounts (no volúmenes nombrados) a propósito: config/ es
+# donde el usuario coloca minos-public-cert.pem a mano (ver README "Configurar"), y data/ es donde
+# quiere poder inspeccionar directamente banxicosim.mv.db con un cliente H2 sin entrar al
+# contenedor.
+services:
+  banxico-simulator:
+    build: .
+    container_name: banxico-simulator
+    ports:
+      - "6001:6001"   # SPEI -- minos apunta aquí
+      - "6002:6002"   # ARA -- intercambio de certificados
+      - "8089:8089"   # API de control HTTP -- ver httpclient/
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    environment:
+      # Sobreescribe cualquier clave de simulator.properties sin tener que montar el archivo --
+      # ver SimConfig.applyEnvironmentOverrides. Ejemplos, descomenta lo que necesites:
+      # SPEI_PORT: "6001"
+      # MINOS_ENTITY_CODE: "90646"
+      # MINOS_ENTITY_NAME: "MINOS-DEV"
+      TZ: "America/Mexico_City"
+    restart: unless-stopped

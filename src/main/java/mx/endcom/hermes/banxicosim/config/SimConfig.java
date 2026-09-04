@@ -7,8 +7,16 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 /**
- * Configuración del simulador, cargada de un archivo .properties (por defecto
- * {@code config/simulator.properties}, sobreescribible con {@code -Dconfig=<ruta>}).
+ * Configuración del simulador. Orden de precedencia, de menor a mayor: valores por defecto →
+ * archivo .properties (por defecto {@code config/simulator.properties}, sobreescribible con
+ * {@code -Dconfig=<ruta>}) → variables de entorno.
+ *
+ * <p>Las variables de entorno existen para poder correr el contenedor Docker sin tener que montar
+ * un archivo de configuración solo para cambiar un puerto o un código de entidad — se necesita un
+ * archivo montado de cualquier forma para {@code minos-public-cert.pem}, pero el resto de los
+ * parámetros son casos comunes al portar el simulador a otra máquina/CI. El nombre de cada
+ * variable es la clave del .properties en mayúsculas con los puntos convertidos a guión bajo, p.
+ * ej. {@code spei.port} &rarr; {@code SPEI_PORT}.</p>
  *
  * Ningún valor aquí es secreto de producción: son parámetros de un ambiente de pruebas propio
  * del simulador (ver AGENTS.md &sect;6 — política de datos sensibles).
@@ -46,7 +54,19 @@ public final class SimConfig {
 				props.load(in);
 			}
 		}
+		applyEnvironmentOverrides(props, defaults);
 		return new SimConfig(props);
+	}
+
+	/** Sobreescribe cada clave conocida si existe la variable de entorno correspondiente. */
+	private static void applyEnvironmentOverrides(Properties props, Properties defaults) {
+		for (String key : defaults.stringPropertyNames()) {
+			String envName = key.toUpperCase(java.util.Locale.ROOT).replace('.', '_');
+			String envValue = System.getenv(envName);
+			if (envValue != null && !envValue.isBlank()) {
+				props.setProperty(key, envValue);
+			}
+		}
 	}
 
 	public int speiPort() {
