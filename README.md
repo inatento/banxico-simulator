@@ -109,26 +109,70 @@ servicios de minos) para que:
 
 ## Tipos de pago disponibles para probar
 
-El simulador valida (Fase 4, `OrdenTopoV`) sólo el subconjunto de tipos de pago que
-[ADR-005](../HERMES-MKI-VOBEDA/ADRs/ADR_005_Simulador-SPEI-protocolo-real.md) definió como alcance
-representativo de v1 — **no los 35 tipos reales del catálogo SPEI** (códigos 0-36, con huecos).
-La razón: cubrir los 35 hubiera significado replicar de memoria el catálogo completo de
-`judeca.CamposOrdenesValidator`/`pagos.properties` sin necesidad real de prueba para todos —
-estos 4 alcanzan para verificar el flujo de validación de campos de punta a punta. Ver
-`validation/PaymentType.java` para el detalle de campos por tipo (orden exacto, cuáles son
-opcionales) y la nota sobre por qué el string de "detalle" no repite los 5 campos comunes.
+> **Esto excede a propósito el alcance que
+> [ADR-005](../HERMES-MKI-VOBEDA/ADRs/ADR_005_Simulador-SPEI-protocolo-real.md) fijó para v1.**
+> Esa ADR decidió explícitamente cubrir sólo un subconjunto representativo de 4 tipos de pago
+> (01, 02, 05, 12) "por desproporción de esfuerzo" frente a replicar los 35 tipos completos del
+> catálogo SPEI. El dueño de este repo decidió, el 2026-09-03, ampliar de todas formas la capa de
+> validación de contenido (`OrdenTopoV`/`OrderFieldValidator`) a los 35 tipos reales — una
+> decisión consciente para este repo específico, no una corrección silenciosa de la ADR. **La ADR-005
+> no se ha actualizado y esta ampliación no se ha confirmado con Pedro** (dueño de la decisión
+> original documentada ahí). Cualquiera que audite este repo debe saber que hay una divergencia
+> pendiente de reconciliar formalmente entre lo que dice ADR-005 y lo que el código realmente
+> valida hoy.
+
+El simulador valida (Fase 4, `OrdenTopoV`) los **35 tipos de pago reales del catálogo SPEI**
+(códigos 0-36; se saltan 13 y 14). Ver `validation/PaymentType.java` para el detalle de campos por
+tipo (orden exacto, cuáles son opcionales, citas línea por línea contra `pagos.properties`) y
+`validation/OrderFieldValidator.java` para las reglas de formato por campo (citas línea por línea
+contra `judeca.CamposOrdenesValidator`) y la nota sobre por qué el string de "detalle" no repite
+los 5 campos comunes.
 
 | Código | Nombre |
 |---|---|
+| 00 | Devolución de Órdenes de Transferencia Aceptadas por SPEI no acreditadas en Cuentas de Clientes |
 | 01 | Tercero a Tercero |
 | 02 | Tercero a Ventanilla |
+| 03 | Tercero a Tercero Vostro |
+| 04 | Tercero a Participante |
 | 05 | Participante a Tercero |
+| 06 | Participante a Tercero Vostro |
+| 07 | Participante a Participante |
+| 08 | Tercero a Tercero FSW |
+| 09 | Tercero a Tercero Vostro FSW |
+| 10 | Participante a Tercero FSW |
+| 11 | Participante a Tercero Vostro FSW |
 | 12 | Nómina |
+| 15 | Pago Factura |
+| 16 | Devolución Extemporánea de Órdenes de Transferencia Aceptadas por SPEI no acreditadas en Cuentas de Clientes |
+| 17 | Devolución de Órdenes de Transferencia Aceptadas por SPEI acreditadas en Cuentas de Clientes |
+| 18 | Devolución Extemporánea de Órdenes de Transferencia Aceptadas por SPEI acreditadas en Cuentas de Clientes |
+| 19 | Cobros presenciales de una ocasión |
+| 20 | Cobros no presenciales de una ocasión |
+| 21 | Cobros no presenciales recurrentes |
+| 22 | Cobros no presenciales recurrentes y no recurrentes a nombre de un tercero |
+| 23 | Devolución especial de Órdenes de Transferencia Aceptadas por SPEI acreditadas en Cuentas de Clientes |
+| 24 | Devolución extemporánea especial de Órdenes de Transferencia Aceptadas por SPEI acreditadas en Cuentas de Clientes |
+| 25 | Tercero a Tercero FSW CLS |
+| 26 | Tercero a tercero vostro FSW CLS |
+| 27 | Participante a tercero FSW CLS |
+| 28 | Participante a tercero vostro FSW CLS |
+| 29 | Participante a Participante FSW CLS |
+| 30 | Tercero indirecto a tercero |
+| 31 | Tercero indirecto a participante |
+| 32 | Presencial de una ocasión indirecto |
+| 33 | No presencial de una ocasión indirecto |
+| 34 | No presencial recurrente indirecto |
+| 35 | Remesa saliente |
+| 36 | Remesa entrante |
 
-Cualquier otro código de tipo de pago en un `OrdenTopoV` entrante es tratado por
-`OrderFieldValidator` como fuera de catálogo — si una prueba futura necesita ampliar el
-subconjunto, hay que agregar el tipo a `PaymentType` citando `pagos.properties` línea por línea
-(ver AGENTS.md &sect;4/&sect;5, estas reglas no se reinventan de memoria).
+Cualquier código fuera de este catálogo (i.e. distinto de 0-36 o igual a 13/14) en un `OrdenTopoV`
+entrante es tratado por `OrderFieldValidator` como fuera de catálogo SPEI real — no como "fuera de
+alcance de v1" (ya no aplica esa distinción). Ver `validation/OrderFieldValidator.java` para las
+limitaciones conocidas y documentadas de esta ampliación (catálogos externos configurables vacíos
+por defecto, campos "*Original" de devoluciones sin una orden original real contra la cual
+comparar, e inconsistencias encontradas entre `pagos.properties` y `CamposOrdenesValidator.java`
+— nombres de campo sin "case" correspondiente en el switch de judeca).
 
 ## API de control y flujo de pruebas
 
@@ -186,7 +230,7 @@ contra el jar real.
 | 1 — Servidor TCP + framing + Conexion/Greeting | **Completa** | Verificada con un cliente TCP crudo y con el arnés completo. |
 | 2 — Servidor ARA + certificado autofirmado + ClvSim/RespClvSim | **Completa** | Login ARA (ConnUsr → IdUsuarioAleat → IdFmaAleat → Logged) y `PideCrtNvo`/`RegCrtNvoFmt`/`CrtNoExiste` verificados. Requiere el certificado público de minos configurado (ver arriba). |
 | 3 — EnSesion + MsjCatalogos (sesión "viva") | **Completa** | Incluye `Reenvio`/`FinReenvio` e `InicioSesionCifrada`, que el código real de minos exige tras `MsjCatalogos` aunque la spec técnica no los liste explícitamente (ver `ReenvioCodec.java` y `SpeiSession.handleInicioSesionCifrada`). |
-| 4 — Recepción y validación de OrdenTopoV + AcuseRecibo | **Completa** para los 4 tipos de pago en alcance (01, 02, 05, 12). Verificada aceptando una orden válida y rechazando una con RFC inválido. |
+| 4 — Recepción y validación de OrdenTopoV + AcuseRecibo | **Completa** para los 35 tipos de pago reales del catálogo SPEI (códigos 0-36, sin 13/14) — ampliado más allá de los 4 tipos que fijó ADR-005 para v1 (ver "Tipos de pago disponibles para probar" abajo, incluye la nota de divergencia con la ADR). Verificada aceptando órdenes válidas de varios tipos (incluidos una devolución y un CoDi), rechazando una con un campo obligatorio faltante, y confirmando la regla especial de RFC/CURP de los tipos de participación indirecta/remesas (30-36). |
 | 5 — Envío de Abonos (válidos/inválidos) | **Completa**, disparo manual por consola (`abono` / `abono-invalido`) — no hay todavía un catálogo amplio de escenarios inválidos, sólo el de RFC roto usado para la verificación. |
 | 6 — Persistencia H2 de corridas de prueba | **Completa**. Cada mensaje enviado/recibido en cada sesión queda en `test_event` (con `test_run` como cabecera de corrida), consultable con cualquier cliente SQL sobre `data/banxicosim.mv.db`. |
 
