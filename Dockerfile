@@ -9,9 +9,16 @@ RUN mvn -q -B dependency:go-offline
 COPY src ./src
 RUN mvn -q -B -DskipTests package
 
-FROM eclipse-temurin:17-jre-alpine
+# eclipse-temurin:17-jre-alpine solo publica linux/amd64 -- sin build para arm64 (falla en Apple
+# Silicon con "no match for platform in manifest"). eclipse-temurin:17-jre (Ubuntu, sin Alpine) sí
+# publica linux/arm64 -- más pesada, pero portable entre arquitecturas, que es lo que importa aquí.
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-RUN adduser -D -h /app simulador
+# useradd (no adduser -D, que es sintaxis de BusyBox/Alpine) -- Ubuntu no wget por defecto, se
+# instala para el HEALTHCHECK.
+RUN useradd -m -d /app -s /usr/sbin/nologin simulador \
+	&& apt-get update && apt-get install -y --no-install-recommends wget \
+	&& rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/target/banxico-simulator.jar app.jar
 
 # Puerto SPEI, puerto ARA, puerto de la API de control HTTP (ver control/ControlServer.java).

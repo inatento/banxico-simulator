@@ -9,6 +9,9 @@ import java.security.PublicKey;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,6 +70,13 @@ public final class SpeiSession implements Runnable {
 	private volatile boolean alive = false;
 	private volatile Phase phase = Phase.CONECTANDO;
 	private volatile LocalDate operationalDate;
+
+	/** Todo envío por {@code out} pasa por este lock -- el heartbeat corre en su propio hilo
+	 *  (ver {@link #startHeartbeat()}) y puede coincidir con un envío del hilo principal
+	 *  ({@code run()}/{@code mainLoop}); sin este lock, dos escrituras concurrentes al mismo
+	 *  socket podrían intercalar bytes y corromper el framing. */
+	private final Object writeLock = new Object();
+	private ScheduledExecutorService heartbeat;
 
 	/** Fase del handshake/operación alcanzada por esta sesión -- expuesta por la API de control
 	 *  ({@code GET /session}) para observabilidad; no forma parte del protocolo SPEI. */
@@ -136,6 +146,7 @@ public final class SpeiSession implements Runnable {
 			sendMsjCatalogos();
 			alive = true;
 			phase = Phase.VIVA;
+			startHeartbeat();
 			logger.info("[SPEI] Sesión viva (handshake completo, fases 1-3 cumplidas)");
 
 			mainLoop(in);
@@ -146,6 +157,7 @@ public final class SpeiSession implements Runnable {
 		} finally {
 			alive = false;
 			phase = Phase.TERMINADA;
+			stopHeartbeat();
 		}
 	}
 
@@ -162,7 +174,9 @@ public final class SpeiSession implements Runnable {
 	}
 
 	private void sendGreeting() throws Exception {
-		Frame.of(SpeiProtocol.OP_GREETING, new byte[0]).writeTo(out);
+		synchronized (writeLock) {
+			Frame.of(SpeiProtocol.OP_GREETING, new byte[0]).writeTo(out);
+		}
 		store.logEvent(runId, "OUT", "Greeting", SpeiProtocol.OP_GREETING, "enviado", null, null);
 		phase = Phase.GREETING_ENVIADO;
 		logger.info("[SPEI] >> Greeting");
@@ -171,7 +185,9 @@ public final class SpeiSession implements Runnable {
 	// ---- Fase 2 ----
 
 	private void sendSmLoginReq() throws Exception {
-		Frame.of(SpeiProtocol.OP_SMLOGINREQ, new byte[0]).writeTo(out);
+		synchronized (writeLock) {
+			Frame.of(SpeiProtocol.OP_SMLOGINREQ, new byte[0]).writeTo(out);
+		}
 		store.logEvent(runId, "OUT", "SmLoginReq", SpeiProtocol.OP_SMLOGINREQ, "enviado", null, null);
 		logger.info("[SPEI] >> SmLoginReq");
 	}
@@ -193,7 +209,9 @@ public final class SpeiSession implements Runnable {
 					+ "pero minos NO podrá desencriptar la llave de sesión. Ver README.");
 		}
 		ClvSimCodec.ClvSimBody clvSim = ClvSimCodec.build(minosPublicKey, identity.privateKey());
-		Frame.of(SpeiProtocol.OP_CLVSIM, clvSim.bytes()).writeTo(out);
+		synchronized (writeLock) {
+			Frame.of(SpeiProtocol.OP_CLVSIM, clvSim.bytes()).writeTo(out);
+		}
 		store.logEvent(runId, "OUT", "ClvSim", SpeiProtocol.OP_CLVSIM, "enviado", null, clvSim.bytes());
 		logger.info("[SPEI] >> ClvSim (reto RSA de sesión)");
 
@@ -222,7 +240,9 @@ public final class SpeiSession implements Runnable {
 				LocalDate.now(), 65535, 4096, own, minos,
 				"simulador-hermes-banxico".getBytes(StandardCharsets.ISO_8859_1), 20);
 		byte[] body = WireFraming.withLengthPrefix(payload);
-		Frame.of(SpeiProtocol.OP_ENSESION, body).writeTo(out);
+		synchronized (writeLock) {
+			Frame.of(SpeiProtocol.OP_ENSESION, body).writeTo(out);
+		}
 		store.logEvent(runId, "OUT", "EnSesion", SpeiProtocol.OP_ENSESION, "enviado", null, body);
 		operationalDate = LocalDate.now();
 		phase = Phase.EN_SESION_ENVIADO;
@@ -233,9 +253,47 @@ public final class SpeiSession implements Runnable {
 	private void sendMsjCatalogos() throws Exception {
 		byte[] payload = MsjCatalogosCodec.buildEmptyBody();
 		byte[] body = WireFraming.buildEncryptedPartitioned(payload, sessionKey, sessionIv);
-		Frame.of(SpeiProtocol.OP_MSJCATALOGOS, body).writeTo(out);
+		synchronized (writeLock) {
+			Frame.of(SpeiProtocol.OP_MSJCATALOGOS, body).writeTo(out);
+		}
 		store.logEvent(runId, "OUT", "MsjCatalogos", SpeiProtocol.OP_MSJCATALOGOS, "enviado", null, body);
 		logger.info("[SPEI] >> MsjCatalogos (catálogos vacíos, v1)");
+	}
+
+	/**
+	 * Heartbeat obligatorio: {@code minos} fija un read-timeout de 6s en su socket SPEI
+	 * ({@code SpeiSocketServiceImpl.java:109}, {@code setSoTimeout(6000)}) y NO tolera ni un solo
+	 * timeout -- {@code SpeiInputListener.run()} cierra la conexión de inmediato en cualquier
+	 * {@code IOException}, sin reintentos. minos solo *recibe* {@code AreYouAliveMessage} (nunca
+	 * la manda) y solo *manda* {@code IAmAliveMessage} en respuesta -- el emisor del heartbeat es
+	 * Banxico, así que el simulador tiene que mandarlo proactivamente o minos da por muerta la
+	 * sesión aunque todo lo demás esté bien. Detectado en pruebas reales contra minos (no estaba
+	 * en la spec técnica original ni en el arnés de verificación previo). Cada 3s, bien debajo del
+	 * límite de 6s.
+	 */
+	private void startHeartbeat() {
+		heartbeat = Executors.newSingleThreadScheduledExecutor(r -> {
+			Thread t = new Thread(r, "spei-heartbeat-" + runId);
+			t.setDaemon(true);
+			return t;
+		});
+		heartbeat.scheduleAtFixedRate(() -> {
+			try {
+				synchronized (writeLock) {
+					Frame.of(SpeiProtocol.OP_AREYOUALIVE, new byte[0]).writeTo(out);
+				}
+				logger.debug("[SPEI] >> AreYouAlive (heartbeat)");
+			} catch (Exception e) {
+				logger.warn("[SPEI] Heartbeat falló, deteniéndolo: {}", e.getMessage());
+				heartbeat.shutdown();
+			}
+		}, 3, 3, TimeUnit.SECONDS);
+	}
+
+	private void stopHeartbeat() {
+		if (heartbeat != null) {
+			heartbeat.shutdownNow();
+		}
 	}
 
 	// ---- Operación (Fases 4-5) ----
@@ -290,7 +348,9 @@ public final class SpeiSession implements Runnable {
 
 		byte[] finReenvioPlain = ReenvioCodec.buildFinReenvioBody();
 		byte[] finReenvioCipher = AesCipher.encrypt(finReenvioPlain, sessionKey, sessionIv);
-		Frame.of(32, finReenvioCipher).writeTo(out); // FinReenvioMessage.OP = 32 (ver ToSpeiInputMessage)
+		synchronized (writeLock) {
+			Frame.of(32, finReenvioCipher).writeTo(out); // FinReenvioMessage.OP = 32 (ver ToSpeiInputMessage)
+		}
 		store.logEvent(runId, "OUT", "FinReenvio", 32, "enviado", null, finReenvioCipher);
 		logger.info("[SPEI] >> FinReenvio");
 	}
@@ -327,7 +387,9 @@ public final class SpeiSession implements Runnable {
 		byte[] acusePayload = AcuseReciboCodec.buildBody(
 				orden.operationDate(), orden.folioPack(), orden.entityIndex(), orden.entityCode(), status, errors);
 		byte[] acuseBody = WireFraming.withLengthPrefix(acusePayload);
-		Frame.of(SpeiProtocol.OP_ACUSERECIBO, acuseBody).writeTo(out);
+		synchronized (writeLock) {
+			Frame.of(SpeiProtocol.OP_ACUSERECIBO, acuseBody).writeTo(out);
+		}
 		store.logEvent(runId, "OUT", "AcuseRecibo", SpeiProtocol.OP_ACUSERECIBO,
 				errors.isEmpty() ? "aceptado" : "rechazado", "erroresOrdenes=" + errors.size(), acuseBody);
 		logger.info("[SPEI] >> AcuseRecibo folioPack={} status={} erroresOrdenes={}",
@@ -372,7 +434,9 @@ public final class SpeiSession implements Runnable {
 
 			byte[] body = WireFraming.buildEncryptedSignedPartitioned(payload, identity.privateKey(),
 					sessionKey, sessionIv);
-			Frame.of(SpeiProtocol.OP_ABONOS, body).writeTo(out);
+			synchronized (writeLock) {
+				Frame.of(SpeiProtocol.OP_ABONOS, body).writeTo(out);
+			}
 			store.logEvent(runId, "OUT", "Abonos", SpeiProtocol.OP_ABONOS,
 					valid ? "enviado-valido" : "enviado-invalido", null, body);
 			logger.info("[SPEI] >> Abonos ({})", valid ? "contenido válido" : "contenido deliberadamente inválido");
