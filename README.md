@@ -229,6 +229,20 @@ contra el jar real.
   certificado, o no puede resolver `Spei.myEntity` y truena más adelante — por eso `EnSesion`
   siempre declara exactamente dos entidades (la propia y la de minos).
 
+## Mejoras futuras (opcionales — no bloquean el prototipo)
+
+A diferencia de la sección anterior, esto no es alcance recortado de v1: son ideas de mejora que
+nadie ha pedido todavía, sin dueño ni fecha. Se listan aquí para no perderlas, no como pendiente.
+
+- **Publicar la imagen en un registro** (p. ej. GitHub Container Registry) para que quien clone el
+  repo haga `docker compose pull` en vez de reconstruir el jar localmente con cada `docker compose
+  up --build`. Hoy cada quien construye su propia imagen, lo cual es suficiente mientras el
+  simulador lo use una persona a la vez — se vuelve más valioso en cuanto lo use más de un dev o
+  quede en un pipeline de CI.
+- **Imagen multi-arquitectura** (`amd64`/`arm64`) — solo hace falta si el equipo termina corriendo
+  esto en máquinas con distinta arquitectura (p. ej. Apple Silicon en local, x86 en CI); es un flag
+  extra en el build (`docker buildx build --platform linux/amd64,linux/arm64`), no un rediseño.
+
 ## Estructura del repositorio
 
 Ver [AGENTS.md](AGENTS.md) &sect;2.
