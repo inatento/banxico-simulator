@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>mx.endcom.hermes</groupId>
+	<artifactId>banxico-simulator</artifactId>
+	<version>0.1.0</version>
+	<packaging>jar</packaging>
+
+	<name>banxico-simulator</name>
+	<description>
+		Simulador SPEI ("Banxico falso"): servidor TCP que emula a Banxico del lado de la
+		conexion que minos ya sabe hacer, para probar minos en desarrollo sin depender del
+		ambiente real de Banxico. Ver AGENTS.md y README.md.
+	</description>
+
+	<properties>
+		<maven.compiler.source>17</maven.compiler.source>
+		<maven.compiler.target>17</maven.compiler.target>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<bouncycastle.version>1.70</bouncycastle.version>
+		<h2.version>2.2.224</h2.version>
+		<slf4j.version>2.0.13</slf4j.version>
+		<mainClass>mx.endcom.hermes.banxicosim.Main</mainClass>
+	</properties>
+
+	<dependencies>
+		<!-- Misma version de BouncyCastle que ya usa minos (ver su pom.xml), para no
+		     divergir de algoritmos/soporte de padding. bcpkix se agrega ademas de bcprov
+		     porque minos no genera certificados (los recibe ya hechos); el simulador si
+		     necesita construir su propio certificado X.509 autofirmado. -->
+		<dependency>
+			<groupId>org.bouncycastle</groupId>
+			<artifactId>bcprov-jdk15on</artifactId>
+			<version>${bouncycastle.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.bouncycastle</groupId>
+			<artifactId>bcpkix-jdk15on</artifactId>
+			<version>${bouncycastle.version}</version>
+		</dependency>
+
+		<!-- Persistencia embebida de corridas de prueba (Fase 6), mismo patron que
+		     hermes-conectividad-monitor (F-4). -->
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<version>${h2.version}</version>
+		</dependency>
+
+		<!-- Logging simple, sin Spring Boot. -->
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>${slf4j.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-simple</artifactId>
+			<version>${slf4j.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>5.10.2</version>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>banxico-simulator</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+				<configuration>
+					<release>17</release>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>3.2.5</version>
+			</plugin>
+			<!-- Empaqueta un jar ejecutable con todas las dependencias, para poder
+			     arrancar el simulador con `java -jar` sin classpath manual. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.5.3</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<transformers>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>${mainClass}</mainClass>
+								</transformer>
+							</transformers>
+							<!-- Los jars de BouncyCastle vienen firmados; al fusionarlos en un solo jar
+							     los archivos de firma quedan inválidos y la JVM se niega a arrancar
+							     ("Invalid signature file digest"). Se excluyen porque el jar resultante
+							     ya no es el artefacto firmado original. -->
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/*.SF</exclude>
+										<exclude>META-INF/*.DSA</exclude>
+										<exclude>META-INF/*.RSA</exclude>
+									</excludes>
+								</filter>
+							</filters>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

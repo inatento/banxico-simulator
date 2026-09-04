@@ -1,0 +1,17 @@
+target/
+*.class
+dependency-reduced-pom.xml
+
+# Datos generados en tiempo de ejecucion: identidad propia (llaves privadas), base H2, certificado
+# publico de la instancia de minos bajo prueba. Nada de esto va al repositorio (ver AGENTS.md
+# seccion 6 -- politica de datos sensibles).
+data/*
+!data/.gitkeep
+config/simulator.properties
+config/minos-public-cert.pem
+config/*.pem
+
+.DS_Store
+*.iml
+.idea/
+.vscode/

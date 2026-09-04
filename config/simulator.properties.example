@@ -1,0 +1,36 @@
+# Copia este archivo a config/simulator.properties y ajusta los valores.
+# Ninguno de estos valores es un secreto de producción (ver AGENTS.md sección 6).
+
+# Puertos TCP que expone el simulador. minos debe apuntar su configuración de
+# SpeiServiceEntity/AraServiceEntity a estos puertos (ver README).
+spei.port=6001
+ara.port=6002
+
+# Donde se genera/persiste la identidad propia del simulador (llaves RSA + certificado
+# autofirmado). Se genera automáticamente la primera vez que se arranca.
+identity.dir=data/identity
+identity.certificateNumber=0000000001
+
+# Certificado publico REAL de la instancia de minos bajo prueba, en PEM (formato
+# -----BEGIN CERTIFICATE-----). Es obligatorio para que el reto ARA (IdUsuarioAleat) y el
+# desafio ClvSim funcionen -- minos desencripta con su propia llave privada, asi que el
+# simulador necesita saber su llave publica de antemano (igual que en la vida real, donde
+# Banxico ya tiene registrado el certificado del participante). Ver README "Preparar minos".
+minos.publicCert.path=config/minos-public-cert.pem
+
+# Identidad propia (Banxico/simulador) tal como aparece en EnSesion.
+own.entityCode=90999
+own.entityIndex=1
+
+# Identidad de la entidad de minos bajo prueba, tal como esta configurada en su propia base de
+# datos (Spei.entityCode). Debe coincidir exactamente o minos no podra resolver Spei.myEntity.
+minos.entityCode=90646
+minos.entityIndex=2
+minos.entityName=MINOS-DEV
+minos.certificateNumber=0000000002
+
+# Ruta del archivo de base de datos H2 (persistencia de corridas de prueba, Fase 6).
+db.path=data/banxicosim
+
+# Usuario que el simulador reporta en LoginMessage/SmLoginReq (no se valida contra nada real).
+spei.user=BXCOTEST
