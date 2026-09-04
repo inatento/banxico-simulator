@@ -1,0 +1,26 @@
+### 02 — Disparar abonos de prueba (Fase 5)
+#
+# Prerequisitos: el simulador corriendo Y una instancia de minos de pruebas ya conectada, con
+# handshake completo -- confirma con GET /session (01-salud-y-sesion.http) que "alive":true y
+# "fase":"VIVA" antes de correr estos requests. Sin sesión viva ambos responden 409, no una
+# excepción cruda (ver control/ControlServer.java).
+#
+# Estos dos endpoints son el equivalente HTTP de los comandos de consola 'abono' / 'abono-invalido'
+# de Main.java -- mismo camino de código (SpeiSession.sendTestAbono), sólo cambia cómo se dispara.
+
+@baseUrl = http://localhost:8089
+
+### Abono válido -- contenido de detalle correcto (RFC bien formado, cuentas de 18 dígitos, etc).
+# Respuesta esperada (200): {"status":"enviado","valido":true,"runId":...}
+# Sin sesión viva (409): {"error":"no-hay-sesion-viva","detalle":"..."}
+# Verifica el resultado con GET /session (sigue "alive":true) y con 03-corridas-de-prueba.http
+# (busca el evento OUT "Abonos" con result "enviado-valido" en la corrida runId de la respuesta).
+POST {{baseUrl}}/abonos/validos
+
+###
+
+### Abono inválido -- rfcOrdenante deliberadamente roto ("RFC-INVALIDO!!"), para poder observar
+# cómo minos reacciona a un abono con contenido mal formado (no es una orden rechazada por el
+# simulador -- el simulador es quien envía el abono hacia minos, no al revés).
+# Respuesta esperada (200): {"status":"enviado","valido":false,"runId":...}
+POST {{baseUrl}}/abonos/invalidos

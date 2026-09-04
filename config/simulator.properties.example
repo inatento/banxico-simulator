@@ -6,6 +6,10 @@
 spei.port=6001
 ara.port=6002
 
+# Puerto de la API de control HTTP (fuera del protocolo SPEI/ARA) -- health/estado de sesion
+# y disparo de abonos de prueba via HTTP, ver httpclient/*.http y README "API de control".
+control.port=8089
+
 # Donde se genera/persiste la identidad propia del simulador (llaves RSA + certificado
 # autofirmado). Se genera automáticamente la primera vez que se arranca.
 identity.dir=data/identity

@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import mx.endcom.hermes.banxicosim.ara.AraServer;
 import mx.endcom.hermes.banxicosim.config.SimConfig;
+import mx.endcom.hermes.banxicosim.control.ControlServer;
 import mx.endcom.hermes.banxicosim.crypto.SimulatorIdentity;
 import mx.endcom.hermes.banxicosim.persistence.H2Store;
 import mx.endcom.hermes.banxicosim.spei.SpeiServer;
@@ -61,8 +62,12 @@ public final class Main {
 		speiThread.start();
 		araThread.start();
 
+		ControlServer controlServer = new ControlServer(config.controlPort(), speiServer, store);
+		controlServer.start();
+
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 			logger.info("Apagando simulador...");
+			controlServer.stop();
 			speiServer.stop();
 			araServer.stop();
 			try {
@@ -79,8 +84,10 @@ public final class Main {
 	private static void printBanner(SimConfig config) {
 		logger.info("==================================================================");
 		logger.info(" Simulador SPEI (Banxico falso) listo");
-		logger.info(" Puerto SPEI: {}   Puerto ARA: {}", config.speiPort(), config.araPort());
+		logger.info(" Puerto SPEI: {}   Puerto ARA: {}   API de control HTTP: {}",
+				config.speiPort(), config.araPort(), config.controlPort());
 		logger.info(" Comandos de consola: 'abono' | 'abono-invalido' | 'salir'");
+		logger.info(" API de control: ver httpclient/*.http y README.md \"API de control y flujo de pruebas\"");
 		logger.info("==================================================================");
 	}
 

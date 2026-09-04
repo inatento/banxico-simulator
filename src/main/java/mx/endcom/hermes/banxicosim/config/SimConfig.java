@@ -25,6 +25,7 @@ public final class SimConfig {
 		Properties defaults = new Properties();
 		defaults.setProperty("spei.port", "6001");
 		defaults.setProperty("ara.port", "6002");
+		defaults.setProperty("control.port", "8089");
 		defaults.setProperty("identity.dir", "data/identity");
 		defaults.setProperty("identity.certificateNumber", "0000000001");
 		defaults.setProperty("minos.publicCert.path", "config/minos-public-cert.pem");
@@ -54,6 +55,12 @@ public final class SimConfig {
 
 	public int araPort() {
 		return Integer.parseInt(props.getProperty("ara.port"));
+	}
+
+	/** Puerto de la API de control HTTP (fuera del protocolo SPEI/ARA), ver paquete
+	 *  {@code control}. */
+	public int controlPort() {
+		return Integer.parseInt(props.getProperty("control.port"));
 	}
 
 	public Path identityDir() {

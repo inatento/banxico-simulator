@@ -1,0 +1,30 @@
+### 03 — Consultar corridas de prueba persistidas (Fase 6, tablas H2 test_run/test_event)
+#
+# Prerequisito: el simulador corriendo. No requiere una sesión viva -- si ya hubo alguna conexión
+# de minos (completa o no) contra este simulador, aunque ya se haya cerrado, queda registrada
+# aquí. Lo mismo que consultar directamente data/banxicosim.mv.db con un cliente SQL, pero sin
+# necesitar uno.
+
+@baseUrl = http://localhost:8089
+
+# Edita este valor con el "id" de la corrida que quieras inspeccionar -- lo obtienes de la
+# respuesta del primer request de abajo (GET /test-runs).
+@runId = 1
+
+### Listar todas las corridas de prueba, más reciente primero.
+# Respuesta esperada: {"runs":[{"id":...,"startedAt":"...","remoteAddress":"...","channel":"SPEI"}, ...]}
+# Cada corrida corresponde a una conexión TCP de minos contra el socket SPEI (una por intento,
+# incluso si el handshake no llegó a completarse).
+GET {{baseUrl}}/test-runs
+
+###
+
+### Eventos (mensajes enviados/recibidos) de una corrida específica, en orden cronológico.
+# Respuesta esperada: {"runId":...,"events":[{"id":...,"occurredAt":"...","direction":"IN"|"OUT",
+#   "messageName":"Conexion"|"Greeting"|"Login"|"ClvSim"|"RespClvSim"|"EnSesion"|"MsjCatalogos"|
+#   "InicioSesionCifrada"|"Reenvio"|"FinReenvio"|"OrdenTopoV"|"AcuseRecibo"|"Abonos"|...,
+#   "opCode":N,"result":"enviado"|"recibido"|"aceptado"|"rechazado"|"enviado-valido"|
+#   "enviado-invalido","detail":"..."|null,"rawHex":"..."|null}, ...]}
+# Si el runId no existe, la respuesta es la misma forma con "events":[] (no hay 404 -- una
+# corrida sin eventos es indistinguible de un id inexistente en esta v1).
+GET {{baseUrl}}/test-runs/{{runId}}/events

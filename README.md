@@ -75,6 +75,72 @@ servicios de minos) para que:
   (ver `BanxicoServiceEntity.portRange()` en minos — por ejemplo `"6001:6001"` para el socket SPEI
   y `"6002:6002"` para ARA, si usas los puertos por defecto de este simulador).
 
+## Tipos de pago disponibles para probar
+
+El simulador valida (Fase 4, `OrdenTopoV`) sólo el subconjunto de tipos de pago que
+[ADR-005](../HERMES-MKI-VOBEDA/ADRs/ADR_005_Simulador-SPEI-protocolo-real.md) definió como alcance
+representativo de v1 — **no los 35 tipos reales del catálogo SPEI** (códigos 0-36, con huecos).
+La razón: cubrir los 35 hubiera significado replicar de memoria el catálogo completo de
+`judeca.CamposOrdenesValidator`/`pagos.properties` sin necesidad real de prueba para todos —
+estos 4 alcanzan para verificar el flujo de validación de campos de punta a punta. Ver
+`validation/PaymentType.java` para el detalle de campos por tipo (orden exacto, cuáles son
+opcionales) y la nota sobre por qué el string de "detalle" no repite los 5 campos comunes.
+
+| Código | Nombre |
+|---|---|
+| 01 | Tercero a Tercero |
+| 02 | Tercero a Ventanilla |
+| 05 | Participante a Tercero |
+| 12 | Nómina |
+
+Cualquier otro código de tipo de pago en un `OrdenTopoV` entrante es tratado por
+`OrderFieldValidator` como fuera de catálogo — si una prueba futura necesita ampliar el
+subconjunto, hay que agregar el tipo a `PaymentType` citando `pagos.properties` línea por línea
+(ver AGENTS.md &sect;4/&sect;5, estas reglas no se reinventan de memoria).
+
+## API de control y flujo de pruebas
+
+Además de los dos sockets del protocolo SPEI/ARA (que sólo minos consume) y la consola de
+stdin, el simulador expone una **API de control HTTP** — un tercer puerto, sin relación con el
+protocolo real, pensado para disparar y observar corridas de prueba con clientes HTTP simples en
+vez de la consola. Está implementada con `com.sun.net.httpserver.HttpServer` del JDK (cero
+dependencias nuevas, ver AGENTS.md &sect;4). Puerto configurable en `config/simulator.properties`
+(`control.port`, default `8089`).
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| `GET` | `/health` | Liveness del proceso. `{"status":"ok"}` |
+| `GET` | `/session` | Estado de la sesión SPEI más reciente: fase de handshake alcanzada, si sigue viva, día operativo declarado en `EnSesion`. `{"session":null}` si nunca se ha conectado minos — nunca un 500. |
+| `POST` | `/abonos/validos` | Dispara un abono de prueba válido — mismo camino que el comando de consola `abono` (`SpeiSession.sendTestAbono(true)`). 409 con detalle si no hay sesión SPEI viva. |
+| `POST` | `/abonos/invalidos` | Igual, con contenido deliberadamente inválido (RFC roto) — equivalente a `abono-invalido`. |
+| `GET` | `/test-runs` | Lista las corridas de prueba registradas en H2 (tabla `test_run`), más reciente primero. |
+| `GET` | `/test-runs/{id}/events` | Lista los mensajes enviados/recibidos de una corrida (tabla `test_event`), en orden cronológico. |
+
+Ejemplo de `GET /session` con una sesión viva:
+
+```json
+{"session":{"runId":1001,"channel":"SPEI","remoteAddress":"/127.0.0.1:54321",
+  "alive":true,"fase":"VIVA","diaOperativo":"2026-09-03"}}
+```
+
+El contrato completo de cada endpoint (forma exacta de la respuesta, casos de error) está en los
+comentarios de los propios requests ejecutables — no se duplica aquí, ver
+[`httpclient/`](httpclient/).
+
+### Flujo de prueba end-to-end
+
+1. Arranca el simulador (`java -jar target/banxico-simulator.jar`).
+2. Apunta una instancia de minos de pruebas hacia él (sección "Apuntar una instancia de minos en
+   pruebas hacia el simulador" arriba) — es minos quien abre la conexión, nunca al revés.
+3. Espera a que el handshake real complete — verifica con `GET /session` hasta ver
+   `"alive":true` y `"fase":"VIVA"`.
+4. Usa los archivos de [`httpclient/`](httpclient/) para disparar abonos de prueba y consultar
+   corridas: `httpclient/01-salud-y-sesion.http` (salud y estado de sesión),
+   `httpclient/02-abonos.http` (disparar abonos válidos/inválidos),
+   `httpclient/03-corridas-de-prueba.http` (listar corridas y sus eventos).
+5. Revisa el detalle completo de cada corrida con `GET /test-runs/{id}/events`, o directamente
+   contra `data/banxicosim.mv.db` con cualquier cliente SQL compatible con H2.
+
 ## Estado de avance por fase
 
 Las 6 fases del plan (`02_especificacion_tecnica.md` &sect;9). **Verificado de punta a punta**

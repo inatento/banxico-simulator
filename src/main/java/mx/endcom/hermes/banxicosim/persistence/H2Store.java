@@ -3,9 +3,12 @@ package mx.endcom.hermes.banxicosim.persistence;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
@@ -108,6 +111,57 @@ public final class H2Store implements AutoCloseable {
 		} catch (SQLException e) {
 			logger.warn("No fue posible registrar el evento de prueba {}: {}", messageName, e.getMessage());
 		}
+	}
+
+	/** Cabecera de una corrida de prueba (tabla {@code test_run}), para la API de control
+	 *  ({@code GET /test-runs}). */
+	public record TestRun(long id, Instant startedAt, String remoteAddress, String channel) {
+	}
+
+	/** Un evento (mensaje enviado/recibido) de una corrida (tabla {@code test_event}), para la
+	 *  API de control ({@code GET /test-runs/{id}/events}). */
+	public record TestEvent(long id, long runId, Instant occurredAt, String direction, String messageName,
+			Integer opCode, String result, String detail, String rawHex) {
+	}
+
+	/** Todas las corridas de prueba registradas, más reciente primero. Lectura directa por
+	 *  JDBC, mismo estilo que el resto de esta clase -- sin ORM. */
+	public List<TestRun> listRuns() {
+		List<TestRun> runs = new ArrayList<>();
+		String sql = "SELECT id, started_at, remote_address, channel FROM test_run ORDER BY started_at DESC";
+		try (PreparedStatement ps = connection.prepareStatement(sql);
+				ResultSet rs = ps.executeQuery()) {
+			while (rs.next()) {
+				runs.add(new TestRun(rs.getLong("id"), rs.getTimestamp("started_at").toInstant(),
+						rs.getString("remote_address"), rs.getString("channel")));
+			}
+		} catch (SQLException e) {
+			logger.warn("No fue posible listar las corridas de prueba: {}", e.getMessage());
+		}
+		return runs;
+	}
+
+	/** Eventos de una corrida específica, en orden cronológico. */
+	public List<TestEvent> listEventsForRun(long runId) {
+		List<TestEvent> events = new ArrayList<>();
+		String sql = "SELECT id, run_id, occurred_at, direction, message_name, op_code, result, detail, raw_hex "
+				+ "FROM test_event WHERE run_id = ? ORDER BY occurred_at ASC, id ASC";
+		try (PreparedStatement ps = connection.prepareStatement(sql)) {
+			ps.setLong(1, runId);
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next()) {
+					int opCode = rs.getInt("op_code");
+					Integer opCodeOrNull = rs.wasNull() ? null : opCode;
+					events.add(new TestEvent(rs.getLong("id"), rs.getLong("run_id"),
+							rs.getTimestamp("occurred_at").toInstant(), rs.getString("direction"),
+							rs.getString("message_name"), opCodeOrNull, rs.getString("result"),
+							rs.getString("detail"), rs.getString("raw_hex")));
+				}
+			}
+		} catch (SQLException e) {
+			logger.warn("No fue posible listar los eventos de la corrida {}: {}", runId, e.getMessage());
+		}
+		return events;
 	}
 
 	private static String bytesToHex(byte[] bytes) {

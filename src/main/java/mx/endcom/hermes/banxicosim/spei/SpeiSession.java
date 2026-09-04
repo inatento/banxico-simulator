@@ -65,6 +65,21 @@ public final class SpeiSession implements Runnable {
 	private byte[] sessionKey;
 	private byte[] sessionIv;
 	private volatile boolean alive = false;
+	private volatile Phase phase = Phase.CONECTANDO;
+	private volatile LocalDate operationalDate;
+
+	/** Fase del handshake/operación alcanzada por esta sesión -- expuesta por la API de control
+	 *  ({@code GET /session}) para observabilidad; no forma parte del protocolo SPEI. */
+	public enum Phase {
+		CONECTANDO,
+		CONEXION_RECIBIDA,
+		GREETING_ENVIADO,
+		LOGIN_RECIBIDO,
+		CLVSIM_COMPLETADO,
+		EN_SESION_ENVIADO,
+		VIVA,
+		TERMINADA
+	}
 
 	public SpeiSession(Socket socket, SimulatorIdentity identity, PublicKey minosPublicKey, SimConfig config,
 			H2Store store) {
@@ -78,6 +93,28 @@ public final class SpeiSession implements Runnable {
 
 	public boolean isAlive() {
 		return alive;
+	}
+
+	/** Fase de handshake/operación alcanzada -- ver {@link Phase}. */
+	public Phase phase() {
+		return phase;
+	}
+
+	/** Día operativo declarado en {@code EnSesion} (fecha con la que arrancó la sesión viva),
+	 *  o {@code null} si la sesión todavía no llega a esa fase. */
+	public LocalDate operationalDate() {
+		return operationalDate;
+	}
+
+	public long runId() {
+		return runId;
+	}
+
+	/** Dirección remota (minos) de esta conexión. Sigue disponible después de cerrada la
+	 *  conexión -- {@link Socket#getRemoteSocketAddress()} conserva el valor cacheado. */
+	public String remoteAddress() {
+		var address = socket.getRemoteSocketAddress();
+		return address == null ? null : address.toString();
 	}
 
 	@Override
@@ -98,6 +135,7 @@ public final class SpeiSession implements Runnable {
 			sendEnSesion();
 			sendMsjCatalogos();
 			alive = true;
+			phase = Phase.VIVA;
 			logger.info("[SPEI] Sesión viva (handshake completo, fases 1-3 cumplidas)");
 
 			mainLoop(in);
@@ -107,6 +145,7 @@ public final class SpeiSession implements Runnable {
 			logger.error("[SPEI] Sesión terminada con error: {}", e.getMessage(), e);
 		} finally {
 			alive = false;
+			phase = Phase.TERMINADA;
 		}
 	}
 
@@ -118,12 +157,14 @@ public final class SpeiSession implements Runnable {
 			throw new IllegalStateException("Se esperaba ConexionMessage (16), llegó " + frame.operation());
 		}
 		store.logEvent(runId, "IN", "Conexion", frame.operation(), "recibido", null, null);
+		phase = Phase.CONEXION_RECIBIDA;
 		logger.info("[SPEI] << Conexion");
 	}
 
 	private void sendGreeting() throws Exception {
 		Frame.of(SpeiProtocol.OP_GREETING, new byte[0]).writeTo(out);
 		store.logEvent(runId, "OUT", "Greeting", SpeiProtocol.OP_GREETING, "enviado", null, null);
+		phase = Phase.GREETING_ENVIADO;
 		logger.info("[SPEI] >> Greeting");
 	}
 
@@ -142,6 +183,7 @@ public final class SpeiSession implements Runnable {
 		}
 		String user = new ByteReader(frame.body()).readCString();
 		store.logEvent(runId, "IN", "Login", frame.operation(), "recibido", "usuario=" + user, frame.body());
+		phase = Phase.LOGIN_RECIBIDO;
 		logger.info("[SPEI] << Login, usuario minos: {}", user);
 	}
 
@@ -163,6 +205,7 @@ public final class SpeiSession implements Runnable {
 				clvSim.sessionKeys().rawSymmetricKey(), minosPublicKey);
 		store.logEvent(runId, "IN", "RespClvSim", resp.operation(), "recibido",
 				"firmaVerificada=" + result.signatureVerified(), resp.body());
+		phase = Phase.CLVSIM_COMPLETADO;
 		logger.info("[SPEI] << RespClvSim, firma verificada={}", result.signatureVerified());
 		return clvSim.sessionKeys();
 	}
@@ -181,6 +224,8 @@ public final class SpeiSession implements Runnable {
 		byte[] body = WireFraming.withLengthPrefix(payload);
 		Frame.of(SpeiProtocol.OP_ENSESION, body).writeTo(out);
 		store.logEvent(runId, "OUT", "EnSesion", SpeiProtocol.OP_ENSESION, "enviado", null, body);
+		operationalDate = LocalDate.now();
+		phase = Phase.EN_SESION_ENVIADO;
 		logger.info("[SPEI] >> EnSesion (entidad propia={}, entidad minos={})",
 				config.ownEntityCode(), config.minosEntityCode());
 	}
