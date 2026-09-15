@@ -21,6 +21,14 @@ public final class RsaCipher {
 	private static final String CIPHER_ALGO = "RSA/ECB/PKCS1Padding";
 	private static final String SIGN_ALGO = "SHA256withRSA";
 
+	/**
+	 * Único mensaje del protocolo real que NO usa PKCS1Padding: {@code ClvSim} (el reto RSA de
+	 * sesión). Verificado contra {@code core/spei/dto/in/ClvSim.java:92} del repo minos — minos
+	 * desencripta la llave simétrica de sesión con esta transformación exacta, pidiendo
+	 * explícitamente el proveedor "BC" (ver {@code util/impl/RSACipher.java:36}).
+	 */
+	private static final String CIPHER_ALGO_CLVSIM = "RSA/None/OAEPWithSHA-512AndMGF1Padding";
+
 	private RsaCipher() {
 	}
 
@@ -28,6 +36,18 @@ public final class RsaCipher {
 		Cipher cipher = Cipher.getInstance(CIPHER_ALGO);
 		cipher.init(Cipher.ENCRYPT_MODE, publicKey);
 		return cipher.doFinal(data);
+	}
+
+	/** Cifra con el padding exacto que {@code ClvSim.build()} espera — ver {@link #CIPHER_ALGO_CLVSIM}. */
+	public static byte[] encryptOaepSha512(byte[] data, Key publicKey) throws Exception {
+		Cipher cipher = Cipher.getInstance(CIPHER_ALGO_CLVSIM, "BC");
+		cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+		return cipher.doFinal(data);
+	}
+
+	/** Como {@link #encryptOaepSha512} pero el resultado ya viene en Base64 (bytes ASCII). */
+	public static byte[] encryptOaepSha512ToBase64(byte[] data, Key publicKey) throws Exception {
+		return encodeBase64(encryptOaepSha512(data, publicKey));
 	}
 
 	public static byte[] decrypt(byte[] data, Key privateKey) throws Exception {

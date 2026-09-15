@@ -273,6 +273,43 @@ contra el jar real.
   certificado, o no puede resolver `Spei.myEntity` y truena más adelante — por eso `EnSesion`
   siempre declara exactamente dos entidades (la propia y la de minos).
 
+### Bugs de protocolo encontrados y corregidos (2026-09-14, pendiente de revisión de Miguel Zavala)
+
+Encontrados conectando una instancia real de minos (no el arnés Python) contra el simulador
+desplegado en `192.168.1.52`, comparando directamente contra el código fuente de minos. Los tres
+tocan codecs de protocolo (`spei/messages/*`, `spei/SpeiSession.java`) — **riesgo R2, no mergeados
+a la ligera**: quedan documentados aquí para revisión de Miguel Zavala antes de darlos por
+definitivos, ver AGENTS.md &sect;5.
+
+1. **Padding RSA incorrecto en el reto `ClvSim`.** `RsaCipher`/`ClvSimCodec` cifraban la llave de
+   sesión con `RSA/ECB/PKCS1Padding` (el padding que usa el resto del protocolo), pero
+   `ClvSim.build()` del minos real descifra específicamente ese mensaje con
+   `RSA/None/OAEPWithSHA-512AndMGF1Padding` vía el provider BC. Con PKCS1 el descifrado de minos
+   fallaba o producía una llave de sesión corrupta. Se agregó `RsaCipher.encryptOaepSha512(...)` y
+   `ClvSimCodec.build()` ahora la usa exclusivamente para este mensaje; el resto del protocolo
+   sigue en PKCS1.
+2. **Orden de mensajes `ClvSim`/`EnSesion` invertido respecto al real.** La especificación técnica
+   (`02_especificacion_tecnica.md` &sect;3) documenta `ClvSim → EnSesion`, pero
+   `EnSesionMessageHandler.handle()` de minos llama `Spei.resetSession()` al procesar `EnSesion`,
+   lo que borra la llave AES que `ClvSim` acababa de establecer — el descifrado posterior de
+   `MsjCatalogos` truena (`IllegalArgumentException: Missing argument`, el mensaje de JCE para un
+   `SecretKeySpec`/`IvParameterSpec` nulo). Se invirtió el orden en `SpeiSession.run()` a
+   `EnSesion → ClvSim`. Esta es una divergencia deliberada frente a la spec, no un error de lectura
+   de la spec — el comportamiento real de minos manda sobre el documento.
+3. **Carrera de concurrencia introducida por el punto anterior.** Al mandar `EnSesion` primero,
+   minos dispara de forma asíncrona (hilo aparte, fetch de certificado a ARA) su
+   `InicioSesionCifrada`, que puede llegar al simulador antes que el `RespClvSim` que
+   `performClvSim()` esperaba de forma estrictamente secuencial (`IllegalStateException: Se
+   esperaba RespClvSim (221), llegó 220`). Se hizo `performClvSim()` tolerante a que
+   `InicioSesionCifrada` llegue primero, procesándolo en un ciclo de lectura antes de continuar
+   esperando `RespClvSim`.
+
+Con los tres fixes, una sesión real minos-simulador llega de punta a punta a `"alive":true,
+"fase":"VIVA"` (confirmado también del lado de minos con
+`{"speiConecction":true,"speiOperation":true}`). Archivos tocados:
+`crypto/RsaCipher.java`, `spei/messages/ClvSimCodec.java`, `spei/SpeiSession.java` — javadoc de
+cada uno actualizado con el detalle técnico de su fix.
+
 ## Mejoras futuras (opcionales — no bloquean el prototipo)
 
 A diferencia de la sección anterior, esto no es alcance recortado de v1: son ideas de mejora que

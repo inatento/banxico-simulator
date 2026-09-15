@@ -20,6 +20,13 @@ import mx.endcom.hermes.banxicosim.wire.ByteWriter;
  *       ({@code Spei.privateKey}) — por eso el simulador debe cifrar con la llave PÚBLICA real
  *       de minos (pre-configurada, la misma que se usa para el reto ARA IdUsuarioAleat si minos
  *       usa un solo certificado para ambos sockets — ver README).</li>
+ *   <li><b>Único mensaje que no usa {@code RSA/ECB/PKCS1Padding}</b>: {@code ClvSim.build()}
+ *       (línea 92 del repo minos) desencripta con {@code RSA/None/OAEPWithSHA-512AndMGF1Padding}
+ *       explícitamente vía proveedor "BC" — encontrado en despliegue real 2026-09-14 contra
+ *       minos real (el simulador traía {@code RsaCipher.encryptToBase64} de uso general, que usa
+ *       PKCS1Padding, y minos tronaba con {@code BadBlockException: unable to decrypt block} al
+ *       recibir este mensaje específico; la fase ARA con PKCS1Padding sí funciona igual, no se
+ *       tocó). Ver {@link RsaCipher#encryptOaepSha512ToBase64}.</li>
  *   <li>Los primeros 16 bytes desencriptados son la llave AES de sesión; los siguientes 16, el IV
  *       (ver {@code ClvSim.build()}: {@code key = copyOfRange(0,16)}, {@code vector = copyOfRange(16,32)}).</li>
  *   <li>minos firma exactamente esos 32 bytes (la llave simétrica completa, ANTES de partirla)
@@ -52,7 +59,7 @@ public final class ClvSimCodec {
 		byte[] key = java.util.Arrays.copyOfRange(raw, 0, 16);
 		byte[] iv = java.util.Arrays.copyOfRange(raw, 16, 32);
 
-		byte[] encryptedB64 = RsaCipher.encryptToBase64(raw, minosPublicKey);
+		byte[] encryptedB64 = RsaCipher.encryptOaepSha512ToBase64(raw, minosPublicKey);
 		byte[] ownSignatureB64 = RsaCipher.encodeBase64(RsaCipher.sign(raw, ownPrivateKey));
 
 		byte[] body = new ByteWriter()

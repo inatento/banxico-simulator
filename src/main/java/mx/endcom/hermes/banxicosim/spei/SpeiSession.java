@@ -35,22 +35,35 @@ import mx.endcom.hermes.banxicosim.crypto.AesCipher;
  * Maneja una conexión del socket SPEI principal: todo el enlace (Fases 1-3) y la fase de
  * operación (Fases 4-5) para esa conexión.
  *
- * <p>Secuencia (ver 02_especificacion_tecnica.md &sect;3, verificada contra el código real de
- * minos — ver citas en cada paso):</p>
+ * <p>Secuencia (ver 02_especificacion_tecnica.md &sect;3, pero con {@code EnSesion} y
+ * {@code ClvSim} EN ORDEN INVERSO al que describe esa spec — ver nota abajo):</p>
  * <ol>
  *   <li>Espera {@code ConexionMessage} (código 16, sin cuerpo) — lo manda minos primero
  *       ({@code MinosServiceImpl.java:239-241}).</li>
  *   <li>Manda {@code GreetingMessage} (código 247).</li>
  *   <li>Manda {@code SmLoginReqMessage} (código 254); espera {@code LoginMessage} (código 1).</li>
+ *   <li>Manda {@code EnSesionMessage} (código 13, particionado sin cifrar).</li>
  *   <li>Manda {@code ClvSimMessage} (código 80); espera {@code RespClvSimMessage} (código 221) —
  *       a partir de aquí hay llave de sesión AES.</li>
- *   <li>Manda {@code EnSesionMessage} (código 13, particionado sin cifrar) y
- *       {@code MsjCatalogosMessage} (código 31, cifrado AES). La sesión queda "viva".</li>
+ *   <li>Manda {@code MsjCatalogosMessage} (código 31, cifrado AES). La sesión queda "viva".</li>
  *   <li>Atiende {@code Reenvio}/{@code InicioSesionCifrada} (mensajes que minos manda sin que la
  *       spec técnica los liste explícitamente, pero que el código real sí exige — ver
  *       {@code ReenvioCodec} y el manejo de InicioSesionCifrada abajo) y, en operación,
  *       {@code OrdenTopoV} (Fase 4) y puede mandar {@code Abonos} (Fase 5).</li>
  * </ol>
+ *
+ * <p><b>Por qué el orden está invertido contra 02_especificacion_tecnica.md &sect;3 (que pone
+ * ClvSim antes de EnSesion):</b> encontrado en despliegue real 2026-09-14 contra minos real.
+ * {@code EnSesionMessageHandler.handle()} (repo minos) llama {@code Spei.resetSession()} como
+ * primera línea, y eso limpia {@code Spei.encryptKey}/{@code encryptVector} — los que
+ * {@code ClvSimMessageHandler} acababa de establecer. Con el orden de la spec (ClvSim→EnSesion),
+ * el reset borra la llave de sesión AES justo antes de que {@code MsjCatalogos} la necesite, y
+ * minos truena con {@code IllegalArgumentException: Missing argument} al desencriptar
+ * ({@code SpeiInputEncryptedPartitionedMessage.decryptBody}). Mandando EnSesion primero, el
+ * reset ocurre ANTES de que ClvSim establezca la llave, y esta sobrevive hasta MsjCatalogos. La
+ * spec no se corrigió (no se confirmó con Miguel Zavala, dueño de spec) — este código es lo que
+ * de verdad conecta contra minos real, verificado con `GET /session` llegando a
+ * {@code "alive":true, "fase":"VIVA"}.</p>
  */
 public final class SpeiSession implements Runnable {
 
@@ -139,10 +152,10 @@ public final class SpeiSession implements Runnable {
 			sendGreeting();
 			sendSmLoginReq();
 			awaitLogin(in);
+			sendEnSesion();
 			ClvSimCodec.SessionKeys keys = performClvSim(in);
 			this.sessionKey = keys.key();
 			this.sessionIv = keys.iv();
-			sendEnSesion();
 			sendMsjCatalogos();
 			alive = true;
 			phase = Phase.VIVA;
@@ -215,7 +228,17 @@ public final class SpeiSession implements Runnable {
 		store.logEvent(runId, "OUT", "ClvSim", SpeiProtocol.OP_CLVSIM, "enviado", null, clvSim.bytes());
 		logger.info("[SPEI] >> ClvSim (reto RSA de sesión)");
 
+		// minos procesa EnSesion de forma async (incluye ida y vuelta a ARA por los certificados)
+		// en paralelo a como procesa este ClvSim -- no hay garantía de cuál de las dos respuestas
+		// (InicioSesionCifrada, cola de EnSesion; RespClvSim, cola de ClvSim) llega primero al
+		// socket. Encontrado en despliegue real 2026-09-14: con EnSesion mandado antes que ClvSim
+		// (ver nota de la clase), InicioSesionCifrada casi siempre gana la carrera. Se procesa
+		// aquí si aparece, y se sigue esperando el RespClvSim real.
 		Frame resp = Frame.read(in);
+		while (resp.operation() == SpeiProtocol.OP_INICIO_SESION_CIFRADA) {
+			handleInicioSesionCifrada(resp);
+			resp = Frame.read(in);
+		}
 		if (resp.operation() != SpeiProtocol.OP_RESP_CLVSIM) {
 			throw new IllegalStateException("Se esperaba RespClvSim (221), llegó " + resp.operation());
 		}
