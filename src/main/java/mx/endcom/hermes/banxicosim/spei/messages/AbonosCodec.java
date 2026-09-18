@@ -21,10 +21,34 @@ import mx.endcom.hermes.banxicosim.wire.ByteWriter;
  * {@code readDateTimeParticion}, que primero descarta 4 bytes de "basura" antes de leer la
  * fecha-hora de 7 bytes (ver {@code SpeiMessage.java:362-368}) — a diferencia de
  * {@code AcuseRecibo}/{@code OrdenTopoV}, que usan {@code readDateTime} normal sin ese
- * relleno. El simulador reproduce ese relleno fielmente para que el mensaje no se desalinee.</p>
+ * relleno.</p>
  *
  * <p>v1 manda exactamente 1 "abonoT" (entidad receptora) y 1 "abonoV" (detalle de pago), lo
  * suficiente para demostrar la ruta de abono simple, válido o inválido a propósito.</p>
+ *
+ * <p><b>Desalineamiento de 4 bytes (encontrado y corregido el 2026-09-18, reportado por
+ * Miguel):</b> un {@code NegativeArraySizeException} en {@code Abonos.build()} salía idéntico en
+ * abonos con contenido distinto -- señal de un desalineamiento estructural, no de datos. Rastreando
+ * la cadena real de clases de minos ({@code SpeiInputEncryptedPartitionedMessage} →
+ * {@code SpeiInputEncryptedAndSignedPartitionedMessage.verifySignature()} → {@code AbonosMessage
+ * .loadProperties()}) se confirmó que minos <b>no usa el body ya desenvuelto</b> que calcula
+ * {@code SpeiInputSignedMessage} (ese cálculo se descarta) -- {@code loadProperties()} lee
+ * directo del {@code bodyStream} al que sólo se le consumió el prefijo de {@code totalSize}
+ * (2 bytes). Eso significa que los "4 bytes de basura" que descarta {@code readDateTimeParticion}
+ * son, en el minos real de hoy, el campo {@code signatureSize}(4) de la envoltura firmada
+ * ({@code WireFraming.signedBlock()}) -- no un padding propio del payload. Antes de esta
+ * corrección, {@code buildPayload()} <b>también</b> agregaba su propio padding de 4 bytes al
+ * inicio, duplicando el descarte y corriendo cada campo posterior 4 bytes.
+ * <b>minos es el ambiente real (habla con Banxico en producción) y no se toca por esto</b> -- el
+ * comportamiento correcto para este simulador es igualar lo que minos consume hoy, aunque
+ * técnicamente sea una inconsistencia en su propio código (no propagar el body desenvuelto). Se
+ * quitó el padding propio del payload; el {@code signatureSize} de la envoltura hace ese papel.</p>
+ *
+ * <p><b>Límite real de {@code detail}:</b> tanto el tamaño interno del detalle dentro de
+ * {@code AbonoV} como {@code detailSizes[0]} a nivel {@code Abonos} son campos {@code short} en
+ * el wire real ({@code readArrayShort}). Un {@code detail} de más de {@code Short.MAX_VALUE}
+ * bytes desbordaría ese cast en silencio -- ambos puntos validan el límite en vez de truncar
+ * (esto no fue la causa del bug de arriba, pero es un riesgo real aparte).</p>
  */
 public final class AbonosCodec {
 
@@ -75,11 +99,15 @@ public final class AbonosCodec {
 		body.writeBytes(new byte[]{money[4], money[5], money[6], money[7]}); // right
 		body.writeShortBE((short) spec.paymentType());
 		byte[] detailBytes = spec.detail().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
-		// detailsArraySizes[0]: longitud en BYTES tras codificar a ISO-8859-1, no spec.detail().length()
-		// (conteo de caracteres/UTF-16) -- para texto ASCII ambos coinciden numéricamente, pero
-		// detailsArraySizes debe reflejar el tamaño real del blob que se manda, no el conteo de
-		// caracteres de la cadena Java original. Ver AbonoInceptionMessage.java:59 (minos) para el
-		// campo equivalente.
+		// detailBytes.length se manda dos veces en el wire real: aquí como short (campo interno del
+		// AbonoV) y abajo como int (detailTotalSize a nivel Abonos). El campo short es el límite real
+		// -- un detail de más de Short.MAX_VALUE bytes desborda a negativo al castear y corrompe el
+		// mensaje en silencio (Abonos.build() del lado de minos revienta con NegativeArraySizeException
+		// al leer ese negativo como tamaño de arreglo). Se valida en vez de truncar.
+		if (detailBytes.length > Short.MAX_VALUE) {
+			throw new IllegalArgumentException("detail de AbonoV excede " + Short.MAX_VALUE
+					+ " bytes (" + detailBytes.length + ") -- el campo de tamaño en el wire es un short.");
+		}
 		body.writeShortBE((short) detailBytes.length);
 		body.writeCString(spec.trackingKey());
 		body.writeIntBE(detailBytes.length);
@@ -112,7 +140,13 @@ public final class AbonosCodec {
 			BigDecimal reservedBalance) {
 
 		ByteWriter w = new ByteWriter();
-		w.writeIntBE(0); // 4 bytes de relleno que minos descarta (readDateTimeParticion), ver nota de clase
+		// NO llevar un padding propio de 4 bytes aquí (se quitó el 2026-09-18 -- ver nota de clase
+		// "Desalineamiento de 4 bytes"). AbonosMessage.loadProperties() del lado de minos NO usa el
+		// body ya desenvuelto por SpeiInputSignedMessage -- lee directo del bodyStream que solo tiene
+		// consumido el prefijo de totalSize (2 bytes), así que los "4 bytes de basura" que descarta
+		// readDateTimeParticion() son en realidad el campo signatureSize(4) de WireFraming.signedBlock(),
+		// no un padding propio del payload. Agregar uno aquí duplica el descarte y desalinea todo lo
+		// que sigue por exactamente 4 bytes.
 		w.writeDateTime(LocalDateTime.now());
 		w.writeDate(operationDate);
 		w.writeIntBE(folio);
@@ -125,6 +159,15 @@ public final class AbonosCodec {
 		w.writeMoney(amountTopoT);
 
 		w.writeIntBE(1); // abonosV: un solo detalle de pago
+		// detailSizes[0] en el wire real es un short (ver Abonos.build()/AbonosMessage.loadProperties
+		// del lado de minos: readArrayShort). Un abonoVBytes.length que exceda Short.MAX_VALUE
+		// desborda a negativo al castear, y minos revienta con NegativeArraySizeException al intentar
+		// `new byte[detailSizes[i]]` -- exactamente el crash reportado por Miguel el 2026-09-18 al
+		// mandar un abono con un detail largo. Se valida en vez de truncar en silencio.
+		if (abonoVBytes.length > Short.MAX_VALUE) {
+			throw new IllegalArgumentException("abonoV excede " + Short.MAX_VALUE
+					+ " bytes (" + abonoVBytes.length + ") -- detailSizes en el wire real es un short.");
+		}
 		w.writeShortBE((short) abonoVBytes.length);
 		w.writeIntBE(abonoVBytes.length); // detailTotalSize
 		w.writeBytes(abonoVBytes);
