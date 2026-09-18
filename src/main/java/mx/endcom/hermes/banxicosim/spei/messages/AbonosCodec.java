@@ -74,9 +74,14 @@ public final class AbonosCodec {
 		body.writeBytes(new byte[]{money[0], money[1], money[2], money[3]}); // left
 		body.writeBytes(new byte[]{money[4], money[5], money[6], money[7]}); // right
 		body.writeShortBE((short) spec.paymentType());
-		body.writeShortBE((short) spec.detail().length());
-		body.writeCString(spec.trackingKey());
 		byte[] detailBytes = spec.detail().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+		// detailsArraySizes[0]: longitud en BYTES tras codificar a ISO-8859-1, no spec.detail().length()
+		// (conteo de caracteres/UTF-16) -- para texto ASCII ambos coinciden numéricamente, pero
+		// detailsArraySizes debe reflejar el tamaño real del blob que se manda, no el conteo de
+		// caracteres de la cadena Java original. Ver AbonoInceptionMessage.java:59 (minos) para el
+		// campo equivalente.
+		body.writeShortBE((short) detailBytes.length);
+		body.writeCString(spec.trackingKey());
 		body.writeIntBE(detailBytes.length);
 		body.writeBytes(detailBytes);
 		body.writeIntBE(0); // errorCodeStringSize: sin código de error en v1

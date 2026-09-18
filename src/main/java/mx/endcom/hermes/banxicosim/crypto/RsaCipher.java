@@ -1,9 +1,12 @@
 package mx.endcom.hermes.banxicosim.crypto;
 
 import java.security.Key;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
+import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.PSSParameterSpec;
 import java.util.Base64;
 import javax.crypto.Cipher;
 
@@ -78,6 +81,39 @@ public final class RsaCipher {
 		sig.initVerify(publicKey);
 		sig.update(data);
 		return sig.verify(signature);
+	}
+
+	/**
+	 * Verifica una firma RSASSA-PSS/SHA-512 tal como la produce {@code CipherBase64.sign512RSASSA}
+	 * en la rama {@code refactorClaude} del repo minos (util/impl/CipherBase64.java:229-247):
+	 * digest SHA-512, MGF1 con SHA-512, longitud de sal = 64 (el tamaño del digest SHA-512), campo
+	 * de cola (trailer field) = 1. La rama {@code master} de minos sigue firmando con
+	 * {@code SHA256withRSA} (ver {@link #verify}) — qué rama corre cada instancia real de minos no
+	 * es algo que este simulador pueda saber de antemano, así que {@link #verifyEitherScheme}
+	 * intenta ambos esquemas en vez de asumir uno.
+	 */
+	public static boolean verifyRsassaPssSha512(byte[] data, byte[] signature, PublicKey publicKey) throws Exception {
+		Signature sig = Signature.getInstance("RSASSA-PSS");
+		int saltLength = MessageDigest.getInstance("SHA-512").getDigestLength();
+		sig.setParameter(new PSSParameterSpec("SHA-512", "MGF1", new MGF1ParameterSpec("SHA-512"), saltLength, 1));
+		sig.initVerify(publicKey);
+		sig.update(data);
+		return sig.verify(signature);
+	}
+
+	/**
+	 * Prueba {@link #verifyRsassaPssSha512} y, si no verifica (o truena), cae a {@link #verify}
+	 * ({@code SHA256withRSA}) — ver el porqué en el javadoc de {@link #verifyRsassaPssSha512}.
+	 */
+	public static boolean verifyEitherScheme(byte[] data, byte[] signature, PublicKey publicKey) throws Exception {
+		try {
+			if (verifyRsassaPssSha512(data, signature, publicKey)) {
+				return true;
+			}
+		} catch (Exception ignored) {
+			// esquema no aplica con esta firma/llave, se intenta el otro
+		}
+		return verify(data, signature, publicKey);
 	}
 
 	public static byte[] encodeBase64(byte[] data) {

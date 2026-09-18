@@ -31,8 +31,15 @@ import mx.endcom.hermes.banxicosim.wire.ByteWriter;
  *       (ver {@code ClvSim.build()}: {@code key = copyOfRange(0,16)}, {@code vector = copyOfRange(16,32)}).</li>
  *   <li>minos firma exactamente esos 32 bytes (la llave simétrica completa, ANTES de partirla)
  *       con su propia llave privada, y regresa esa firma en Base64 como único campo de
- *       {@code RespClvSim} (ver {@code processClvSimMessage}, línea 865:
- *       {@code CipherBase64.sign(symmetricalKey, Spei.privateKey)}).</li>
+ *       {@code RespClvSim}. <b>El algoritmo de firma depende de la rama de minos</b>: en
+ *       {@code master}, {@code processClvSimMessage} línea 865 usa
+ *       {@code CipherBase64.sign(symmetricalKey, Spei.privateKey)} ({@code SHA256withRSA}); en
+ *       {@code refactorClaude}, {@code ClvSimMessageHandler.java:38} usa
+ *       {@code CipherBase64.sign512RSASSA(...)} (RSASSA-PSS/SHA-512) — confirmado en despliegue
+ *       real 2026-09-17 contra la instancia "minosa" (que corre {@code refactorClaude}): la firma
+ *       no verificaba con {@code SHA256withRSA} hasta agregar soporte para PSS. Como no hay forma
+ *       de saber de antemano qué rama corre cada instancia real, {@link RsaCipher#verifyEitherScheme}
+ *       intenta ambos esquemas.</li>
  *   <li>El campo {@code signature} que el simulador manda en {@code ClvSim} NO es leído por
  *       {@code ClvSim.build()} ni usado en ningún punto de {@code processClvSimMessage} — es
  *       decorativo del lado de minos. El simulador igual lo llena con una firma real propia
@@ -83,7 +90,7 @@ public final class ClvSimCodec {
 				return new RespClvSimResult(false);
 			}
 			byte[] rawSig = RsaCipher.decodeBase64(sigB64.getBytes(StandardCharsets.US_ASCII));
-			boolean ok = RsaCipher.verify(rawSymmetricKey, rawSig, minosPublicKey);
+			boolean ok = RsaCipher.verifyEitherScheme(rawSymmetricKey, rawSig, minosPublicKey);
 			return new RespClvSimResult(ok);
 		} catch (Exception e) {
 			return new RespClvSimResult(false);
