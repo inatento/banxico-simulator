@@ -34,9 +34,11 @@ public final class WireFraming {
 	}
 
 	/** Firma {@code payload} con la llave privada propia y arma [tamañoFirma BE(4)][payload][firma],
-	 *  donde la firma va en Base64 (ASCII) — igual que minos (ver SpeiOutputSignedMessage.signMessage). */
+	 *  donde la firma va en Base64 (ASCII) — igual que minos (ver SpeiOutputSignedMessage.signMessage,
+	 *  que firma con RSASSA-PSS/SHA-512 vía CipherBase64.sign512RSASSA — NO SHA256withRSA; ver nota
+	 *  en RsaCipher.SIGN_ALGO_PSS). */
 	public static byte[] signedBlock(byte[] payload, PrivateKey signingKey) throws Exception {
-		byte[] rawSignature = RsaCipher.sign(payload, signingKey);
+		byte[] rawSignature = RsaCipher.signRSASSAPSS(payload, signingKey);
 		byte[] sigB64 = RsaCipher.encodeBase64(rawSignature);
 		return new ByteWriter()
 				.writeIntBE(sigB64.length)
@@ -93,7 +95,7 @@ public final class WireFraming {
 		if (verifyingKey != null) {
 			try {
 				byte[] rawSig = RsaCipher.decodeBase64(signatureB64);
-				verified = RsaCipher.verify(payload, rawSig, verifyingKey);
+				verified = RsaCipher.verifyRSASSAPSS(payload, rawSig, verifyingKey);
 			} catch (Exception e) {
 				verified = false;
 			}

@@ -2,6 +2,8 @@ package mx.endcom.hermes.banxicosim.crypto;
 
 import java.security.Key;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -12,7 +14,15 @@ import javax.crypto.Cipher;
 
 /**
  * RSA tal como lo usa minos: ver {@code util/impl/CipherBase64.java} del repo minos.
- * Modo/relleno exacto: {@code RSA/ECB/PKCS1Padding}. Firma: {@code SHA256withRSA}.
+ * Modo/relleno exacto: {@code RSA/ECB/PKCS1Padding}. Firma: {@code SHA256withRSA} para ARA y
+ * ClvSim ({@link #sign}/{@link #verify}) — pero {@code Abonos}/{@code OrdenTopoV} (el sobre
+ * {@code SpeiOutputSignedMessage}/{@code SpeiInputSignedMessage}) usan un algoritmo de firma
+ * DISTINTO, RSASSA-PSS/SHA-512 ({@link #signRSASSAPSS}/{@link #verifyRSASSAPSS} — ver
+ * {@code CipherBase64.sign512RSASSA}/{@code verifySignantureRSASSAPSS} en minos). Encontrado
+ * 2026-09-21: el código original de este archivo asumía {@code SHA256withRSA} para todo,
+ * causando que minos siempre rechazara la firma de {@code Abonos} ("No firmado con certificado
+ * SPEI", nunca fatal pero nunca válida tampoco) — dos esquemas de padding distintos nunca validan
+ * entre sí aunque la llave y los datos sean correctos.
  *
  * minos codifica los blobs cifrados/firmados en Base64 y los manda como cadenas
  * terminadas en 0x00 (ver {@code ClvSim.build()}, {@code RespClvSim.bytes()},
@@ -23,6 +33,20 @@ public final class RsaCipher {
 
 	private static final String CIPHER_ALGO = "RSA/ECB/PKCS1Padding";
 	private static final String SIGN_ALGO = "SHA256withRSA";
+
+	/**
+	 * Algoritmo real que usa minos para firmar/verificar el sobre de mensajes tipo
+	 * {@code Abonos}/{@code OrdenTopoV} -- NO {@link #SIGN_ALGO}. Confirmado contra
+	 * {@code core/spei/message/out/protocol/SpeiOutputSignedMessage.signMessage()} (llama a
+	 * {@code CipherBase64.sign512RSASSA}, RSASSA-PSS con SHA-512) y su contraparte de
+	 * verificación {@code util/impl/CipherBase64.verifySignantureRSASSAPSS} -- ambas usan
+	 * {@code PSSParameterSpec("SHA-512","MGF1",MGF1ParameterSpec("SHA-512"), 64, 1)}.
+	 * {@link #SIGN_ALGO} (SHA256withRSA/PKCS#1v1.5) sigue siendo correcto para ARA
+	 * ({@code AraWireFraming}/{@code AraSession}) y para {@code ClvSim} -- no se tocan, sin
+	 * evidencia de que estén mal.
+	 */
+	private static final String SIGN_ALGO_PSS = "RSASSA-PSS";
+	private static final String BC_PROVIDER = "BC";
 
 	/**
 	 * Único mensaje del protocolo real que NO usa PKCS1Padding: {@code ClvSim} (el reto RSA de
@@ -78,6 +102,43 @@ public final class RsaCipher {
 
 	public static boolean verify(byte[] data, byte[] signature, PublicKey publicKey) throws Exception {
 		Signature sig = Signature.getInstance(SIGN_ALGO);
+		sig.initVerify(publicKey);
+		sig.update(data);
+		return sig.verify(signature);
+	}
+
+	/** {@link PSSParameterSpec} exacto que usa minos (ver nota de {@link #SIGN_ALGO_PSS}). */
+	private static PSSParameterSpec minosPssSpec() {
+		return new PSSParameterSpec("SHA-512", "MGF1", new MGF1ParameterSpec("SHA-512"), 64, 1);
+	}
+
+	/** BC primero siempre, igual que minos tras su propio fix de 2026-09-21 (ver CipherFactory/
+	 *  CipherBase64 del repo minos) -- evita que el algoritmo elegido dependa de qué JDK corre
+	 *  el jar/el jar del simulador. */
+	private static Signature rsassaPssSignature() throws NoSuchAlgorithmException {
+		try {
+			return Signature.getInstance(SIGN_ALGO_PSS, BC_PROVIDER);
+		} catch (NoSuchProviderException | NoSuchAlgorithmException e) {
+			return Signature.getInstance(SIGN_ALGO_PSS);
+		}
+	}
+
+	/** Firma con RSASSA-PSS/SHA-512 -- lo que minos realmente usa para el sobre de Abonos/
+	 *  OrdenTopoV (ver {@link #SIGN_ALGO_PSS}), a diferencia de {@link #sign} (SHA256withRSA,
+	 *  correcto sólo para ARA/ClvSim). */
+	public static byte[] signRSASSAPSS(byte[] data, PrivateKey privateKey) throws Exception {
+		Signature sig = rsassaPssSignature();
+		sig.setParameter(minosPssSpec());
+		sig.initSign(privateKey);
+		sig.update(data);
+		return sig.sign();
+	}
+
+	/** Contraparte de {@link #signRSASSAPSS} -- verifica lo que minos firmó con
+	 *  {@code CipherBase64.sign512RSASSA}. */
+	public static boolean verifyRSASSAPSS(byte[] data, byte[] signature, PublicKey publicKey) throws Exception {
+		Signature sig = rsassaPssSignature();
+		sig.setParameter(minosPssSpec());
 		sig.initVerify(publicKey);
 		sig.update(data);
 		return sig.verify(signature);

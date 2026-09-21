@@ -117,7 +117,10 @@ public final class AbonosCodec {
 		byte[] signable = body.toByteArray();
 		byte[] signatureBytes;
 		if (spec.signProperly()) {
-			signatureBytes = RsaCipher.sign(signable, signingKey);
+			// RSASSA-PSS/SHA-512, no SHA256withRSA -- ver RsaCipher.SIGN_ALGO_PSS: minos verifica
+			// la firma de AbonoV (AbonoInceptionMessage) con CipherBase64.verifySignantureRSASSA(...,
+			// true), que es RSASSA-PSS/SHA-512, no el SHA256withRSA que este código pedía antes.
+			signatureBytes = RsaCipher.signRSASSAPSS(signable, signingKey);
 		} else {
 			signatureBytes = new byte[32]; // firma de relleno: prueba la ruta estructural, no la criptográfica
 		}
