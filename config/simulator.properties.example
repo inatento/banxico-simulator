@@ -13,7 +13,16 @@ control.port=8089
 # Donde se genera/persiste la identidad propia del simulador (llaves RSA + certificado
 # autofirmado). Se genera automáticamente la primera vez que se arranca.
 identity.dir=data/identity
-identity.certificateNumber=0000000001
+
+# Vacío = versionado automático: cada vez que se genera una identidad NUEVA (no cuando se carga
+# una ya existente en identity.dir), el número de certificado se genera solo (epoch en segundos,
+# 10 dígitos) en vez de reusar un valor fijo. No lo fijes a un número explícito salvo que tengas
+# una razón puntual -- un número estático hace que, si regeneras la identidad (borrando los
+# archivos de identity.dir), minos siga verificando contra el certificado VIEJO que ya tenía
+# cacheado bajo ese mismo número (minos nunca refresca un certificado ya cacheado -- bug real,
+# documentado, no corregido -- ver SimulatorIdentity.java y memoria project-banxico-simulador).
+# Esto fue justo lo que causó un InvalidKeyException real contra minosc el 2026-09-21.
+identity.certificateNumber=
 
 # Certificado publico REAL de la instancia de minos bajo prueba, en PEM (formato
 # -----BEGIN CERTIFICATE-----). Es obligatorio para que el reto ARA (IdUsuarioAleat) y el

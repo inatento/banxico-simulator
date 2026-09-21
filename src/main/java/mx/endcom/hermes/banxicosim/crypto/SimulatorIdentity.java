@@ -44,6 +44,22 @@ import org.slf4j.LoggerFactory;
  * <p>La identidad se genera una sola vez y se persiste en disco (PEM) para que el número de
  * certificado y las llaves sean estables entre reinicios del simulador durante una misma
  * campaña de pruebas.</p>
+ *
+ * <p><b>Número de certificado versionado (2026-09-21):</b> cuando se genera una identidad NUEVA
+ * (no cuando se carga una existente), el número de certificado ya no se toma tal cual de
+ * {@code identity.certificateNumber} en {@code simulator.properties} — se genera uno nuevo
+ * automáticamente ({@link #generateFreshCertificateNumber()}), salvo que se pase uno explícito.
+ * Motivo: minos (`EnSesionMessageHandler.fetchCertFromARA()`) **nunca refresca un certificado ya
+ * cacheado bajo el mismo número** — es un bug real y conocido de minos, no corregido (ver memoria
+ * de proyecto `project-banxico-simulador`). Con un número de certificado estático y fijo por
+ * config, regenerar la identidad de este simulador (lo que Pedro tuvo que hacer a mano el
+ * 2026-09-21 para resolver un `InvalidKeyException` real contra minosc) silenciosamente deja a
+ * minos verificando firmas contra el certificado VIEJO cacheado, sin que nadie lo note hasta que
+ * algo truene de forma confusa. Versionar el número en cada generación nueva obliga a minos a
+ * hacer siempre una descarga fresca vía ARA. Ver `identity.certificateNumber` en
+ * {@code config/simulator.properties.example} y {@code AraSession.handlePideCrtNvo} (minos pide
+ * el número que el simulador declaró en su propio {@code EnSesion} — no hay ningún número fijo
+ * que sincronizar del lado de minos, así que este cambio es seguro sin tocar minos).</p>
  */
 public final class SimulatorIdentity {
 
@@ -94,7 +110,12 @@ public final class SimulatorIdentity {
 	 *
 	 * @param dir             directorio donde viven {@code identity.key}, {@code identity.crt},
 	 *                        {@code identity.number}
-	 * @param certificateNumber número de certificado a usar si hay que generar la identidad
+	 * @param certificateNumber número de certificado a usar si hay que generar la identidad —
+	 *                        {@code null} o vacío significa "versionar automáticamente" (ver
+	 *                        {@link #generateFreshCertificateNumber()} y la nota de clase). Pasar
+	 *                        un valor explícito solo tiene sentido para casos puntuales (p. ej.
+	 *                        reproducir un número exacto en una prueba); el valor por defecto de
+	 *                        {@code simulator.properties.example} ya viene vacío.
 	 */
 	public static SimulatorIdentity loadOrCreate(Path dir, String certificateNumber) throws Exception {
 		Files.createDirectories(dir);
@@ -111,7 +132,11 @@ public final class SimulatorIdentity {
 			return new SimulatorIdentity(new KeyPair(pub, priv), cert, number);
 		}
 
-		logger.info("Generando identidad nueva (RSA 2048 + certificado autofirmado) en {}", dir);
+		String freshNumber = (certificateNumber == null || certificateNumber.isBlank())
+				? generateFreshCertificateNumber()
+				: certificateNumber;
+		logger.info("Generando identidad nueva (RSA 2048 + certificado autofirmado) en {} -- "
+				+ "número de certificado versionado: {}", dir, freshNumber);
 		KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
 		kpg.initialize(2048);
 		KeyPair kp = kpg.generateKeyPair();
@@ -119,9 +144,20 @@ public final class SimulatorIdentity {
 
 		Files.writeString(keyPath, toPemPrivateKey(kp.getPrivate()));
 		Files.writeString(certPath, toPem(cert));
-		Files.writeString(numberPath, certificateNumber);
+		Files.writeString(numberPath, freshNumber);
 
-		return new SimulatorIdentity(kp, cert, certificateNumber);
+		return new SimulatorIdentity(kp, cert, freshNumber);
+	}
+
+	/**
+	 * Genera un número de certificado nuevo que minos casi con certeza nunca ha visto antes —
+	 * ver la nota de clase sobre por qué esto importa. Epoch en segundos, formateado a los mismos
+	 * 10 dígitos decimales del formato que ya usaba este simulador ({@code "0000000001"},
+	 * {@code "0000000002"}, ...) — cabe justo (bueno hasta el año 2286) y es trivialmente único
+	 * entre corridas sin necesitar un contador persistido aparte.
+	 */
+	private static String generateFreshCertificateNumber() {
+		return String.format("%010d", Instant.now().getEpochSecond());
 	}
 
 	private static X509Certificate selfSign(KeyPair kp, String subjectDn) throws Exception {

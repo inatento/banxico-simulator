@@ -35,7 +35,10 @@ public final class SimConfig {
 		defaults.setProperty("ara.port", "6002");
 		defaults.setProperty("control.port", "8089");
 		defaults.setProperty("identity.dir", "data/identity");
-		defaults.setProperty("identity.certificateNumber", "0000000001");
+		// Vacío por defecto = versionado automático (ver SimulatorIdentity.loadOrCreate /
+		// generateFreshCertificateNumber). Fijarlo a un valor explícito solo tiene sentido para
+		// casos puntuales -- ver nota de clase en SimulatorIdentity.java, 2026-09-21.
+		defaults.setProperty("identity.certificateNumber", "");
 		defaults.setProperty("minos.publicCert.path", "config/minos-public-cert.pem");
 		defaults.setProperty("own.entityCode", "90999");
 		defaults.setProperty("own.entityIndex", "1");
@@ -87,6 +90,8 @@ public final class SimConfig {
 		return Path.of(props.getProperty("identity.dir"));
 	}
 
+	/** Vacío/no configurado = versionado automático al generar una identidad nueva (ver
+	 *  {@code SimulatorIdentity.loadOrCreate}). */
 	public String ownCertificateNumber() {
 		return props.getProperty("identity.certificateNumber");
 	}
