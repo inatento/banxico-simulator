@@ -1,6 +1,7 @@
 package mx.endcom.hermes.banxicosim.validation;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -327,5 +328,34 @@ public enum PaymentType {
 
 	public static boolean isInScope(int code) {
 		return byCode(code) != null;
+	}
+
+	/**
+	 * Arma el string de "detalle" (separado por 0x00) para este tipo de pago, a partir de un mapa
+	 * de valores de campo -- pensado para construir abonos de prueba de cualquier tipo (spec
+	 * 002/006/004), no solo el {@code TERCERO_A_TERCERO} hardcodeado original de
+	 * {@code SpeiSession.sendTestAbono}. Un campo ausente en {@code fieldValues} se manda vacío si
+	 * es opcional ({@link #isOptional}); si es obligatorio, lanza {@link IllegalArgumentException}
+	 * en vez de mandar un detalle incompleto en silencio.
+	 */
+	public String buildDetail(Map<String, String> fieldValues) {
+		StringBuilder sb = new StringBuilder();
+		boolean first = true;
+		for (String field : fieldsInOrder) {
+			if (!first) {
+				sb.append('\0');
+			}
+			first = false;
+			String value = fieldValues.get(field);
+			if (value == null) {
+				if (!isOptional(field)) {
+					throw new IllegalArgumentException(
+							"Falta el campo obligatorio '" + field + "' para el tipo de pago " + code);
+				}
+				value = "";
+			}
+			sb.append(value);
+		}
+		return sb.toString();
 	}
 }

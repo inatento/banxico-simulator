@@ -58,6 +58,18 @@ public final class AbonosCodec {
 	public record AbonoTRef(int entityIndex, int entityCode, int instructionFolio, short internalFolio) {
 	}
 
+	/**
+	 * Qué firma poner en el {@code AbonoV} (spec 004 -- escenarios de firma). {@code VALIDA} es el
+	 * único camino usado antes de la spec 004 ({@code signProperly=true}); {@code VACIA} es el
+	 * relleno de 32 ceros que ya existía ({@code signProperly=false}); {@code CORRUPTA} es nueva:
+	 * una firma real (mismo tamaño/codificación que una válida) con un byte alterado -- distingue
+	 * "estructura sin firma" (VACIA) de "firma con formato correcto pero inválida" (CORRUPTA), que
+	 * es el caso más realista de corrupción en tránsito.
+	 */
+	public enum SignatureMode {
+		VALIDA, VACIA, CORRUPTA
+	}
+
 	/** Un registro AbonoV embebido: quién manda, quién recibe, monto, tipo de pago y detalle. */
 	public record AbonoVSpec(
 			LocalDate operationDate,
@@ -72,7 +84,7 @@ public final class AbonosCodec {
 			int paymentType,
 			String trackingKey,
 			String detail,
-			boolean signProperly) {
+			SignatureMode signatureMode) {
 	}
 
 	/** Arma el registro AbonoV completo, incluida su propia firma (real o de relleno — ver
@@ -115,21 +127,29 @@ public final class AbonosCodec {
 		body.writeIntBE(0); // errorCodeStringSize: sin código de error en v1
 
 		byte[] signable = body.toByteArray();
-		byte[] signatureBytes;
-		if (spec.signProperly()) {
+		byte[] signatureBytes = switch (spec.signatureMode()) {
 			// RSASSA-PSS/SHA-512, no SHA256withRSA -- ver RsaCipher.SIGN_ALGO_PSS: minos verifica
 			// la firma de AbonoV (AbonoInceptionMessage) con CipherBase64.verifySignantureRSASSA(...,
 			// true), que es RSASSA-PSS/SHA-512, no el SHA256withRSA que este código pedía antes.
-			signatureBytes = RsaCipher.signRSASSAPSS(signable, signingKey);
-		} else {
-			signatureBytes = new byte[32]; // firma de relleno: prueba la ruta estructural, no la criptográfica
-		}
+			case VALIDA -> RsaCipher.signRSASSAPSS(signable, signingKey);
+			case VACIA -> new byte[32]; // firma de relleno: prueba la ruta estructural, no la criptográfica
+			// Firma real (mismo tamaño/codificación que VALIDA) con un byte alterado -- spec 004:
+			// distinta de VACIA porque tiene formato correcto, solo el contenido es inválido.
+			case CORRUPTA -> corrupt(RsaCipher.signRSASSAPSS(signable, signingKey));
+		};
 
 		return new ByteWriter()
 				.writeIntBE(signatureBytes.length)
 				.writeBytes(signable)
 				.writeBytes(signatureBytes)
 				.toByteArray();
+	}
+
+	/** Voltea el último byte de una firma real -- mismo tamaño, contenido inválido (spec 004). */
+	private static byte[] corrupt(byte[] realSignature) {
+		byte[] copy = realSignature.clone();
+		copy[copy.length - 1] ^= 0x01;
+		return copy;
 	}
 
 	public static byte[] buildPayload(

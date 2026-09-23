@@ -260,7 +260,9 @@ public final class SpeiSession implements Runnable {
 				config.minosEntityCode(), config.minosEntityName(), config.minosCertificateNumber());
 
 		byte[] payload = EnSesionCodec.buildBody(
-				LocalDate.now(), 65535, 4096, own, minos,
+				// Spec 001: config.maxMessageLength() en vez de 65535 fijo -- bajarlo fuerza que
+				// minos parta de verdad sus propios envíos hacia el simulador (ver SimConfig).
+				LocalDate.now(), config.maxMessageLength(), 4096, own, minos,
 				"simulador-hermes-banxico".getBytes(StandardCharsets.ISO_8859_1), 20);
 		byte[] body = WireFraming.withLengthPrefix(payload);
 		synchronized (writeLock) {
@@ -274,13 +276,19 @@ public final class SpeiSession implements Runnable {
 	}
 
 	private void sendMsjCatalogos() throws Exception {
-		byte[] payload = MsjCatalogosCodec.buildEmptyBody();
+		// Spec 008: config.catalogosPoblados() decide entre el cuerpo vacío de v1 y catálogos
+		// sintéticos poblados -- no hay evidencia de que minos reaccione distinto a uno u otro,
+		// ver specs/008-msjcatalogos-contenido-real.md "Preguntas abiertas".
+		boolean poblados = config.catalogosPoblados();
+		byte[] payload = poblados
+				? MsjCatalogosCodec.buildPopulatedBody(MsjCatalogosCodec.syntheticCatalogs())
+				: MsjCatalogosCodec.buildEmptyBody();
 		byte[] body = WireFraming.buildEncryptedPartitioned(payload, sessionKey, sessionIv);
 		synchronized (writeLock) {
 			Frame.of(SpeiProtocol.OP_MSJCATALOGOS, body).writeTo(out);
 		}
 		store.logEvent(runId, "OUT", "MsjCatalogos", SpeiProtocol.OP_MSJCATALOGOS, "enviado", null, body);
-		logger.info("[SPEI] >> MsjCatalogos (catálogos vacíos, v1)");
+		logger.info("[SPEI] >> MsjCatalogos ({})", poblados ? "catálogos poblados, spec 008" : "catálogos vacíos, v1");
 	}
 
 	/**
@@ -319,6 +327,19 @@ public final class SpeiSession implements Runnable {
 		}
 	}
 
+	/**
+	 * Spec 009 -- suspende el envío de {@code AreYouAlive} deliberadamente, para probar que minos
+	 * cierra la sesión tras su timeout de lectura de 6s (ver el javadoc de {@link #startHeartbeat}).
+	 * A diferencia de {@link #stopHeartbeat()} (que también se llama al cerrar la sesión
+	 * normalmente), este método es el punto de entrada público para un escenario de prueba
+	 * disparado desde la API de control -- misma acción, distinto propósito documentado.
+	 */
+	public void suspendHeartbeat() {
+		logger.warn("[SPEI] Heartbeat suspendido deliberadamente (spec 009) -- minos debería cerrar "
+				+ "la sesión en ~6s si no ha corrido ya un ciclo de AreYouAlive antes de esto");
+		stopHeartbeat();
+	}
+
 	// ---- Operación (Fases 4-5) ----
 
 	private void mainLoop(DataInputStream in) throws Exception {
@@ -327,7 +348,7 @@ public final class SpeiSession implements Runnable {
 			switch (frame.operation()) {
 				case SpeiProtocol.OP_INICIO_SESION_CIFRADA -> handleInicioSesionCifrada(frame);
 				case 207 -> handleReenvio(frame); // ReenvioMessage.MSG_CODE, ver ReenvioCodec
-				case SpeiProtocol.OP_ORDEN_TOPOV -> handleOrdenTopoV(frame);
+				case SpeiProtocol.OP_ORDEN_TOPOV -> handleOrdenTopoV(frame, in);
 				case SpeiProtocol.OP_IAMALIVE -> logger.info("[SPEI] << IAmAlive");
 				case SpeiProtocol.OP_DEADSRVR, SpeiProtocol.OP_SMTTYCLOSE, SpeiProtocol.OP_NOSERVICE -> {
 					logger.info("[SPEI] minos cerró la sesión (op {})", frame.operation());
@@ -378,9 +399,25 @@ public final class SpeiSession implements Runnable {
 		logger.info("[SPEI] >> FinReenvio");
 	}
 
-	private void handleOrdenTopoV(Frame frame) throws Exception {
-		WireFraming.Unwrapped unwrapped = WireFraming.unwrapEncryptedSignedPartitioned(
-				frame.body(), sessionKey, sessionIv, minosPublicKey);
+	/**
+	 * Spec 001 (lado de recepción): reensambla real, en vez de asumir siempre un solo frame -- ver
+	 * {@link WireFraming.PartitionedAccumulator}. Si el primer frame ya trae el mensaje completo
+	 * (el caso de siempre hasta ahora), el comportamiento es idéntico al de antes: un solo
+	 * {@code feed} deja {@code isComplete()} en true de inmediato y no se lee ningún frame extra.
+	 */
+	private void handleOrdenTopoV(Frame frame, DataInputStream in) throws Exception {
+		WireFraming.PartitionedAccumulator acc = new WireFraming.PartitionedAccumulator();
+		acc.feed(frame.body(), sessionKey, sessionIv);
+		int parts = 1;
+		while (!acc.isComplete()) {
+			Frame continuation = Frame.read(in);
+			acc.feed(continuation.body(), sessionKey, sessionIv);
+			parts++;
+		}
+		if (parts > 1) {
+			logger.info("[SPEI] << OrdenTopoV reensamblado de {} frames (spec 001)", parts);
+		}
+		WireFraming.Unwrapped unwrapped = WireFraming.parseSignedPartitioned(acc.assembledPlaintext(), minosPublicKey);
 		OrdenTopoVCodec.ParsedOrdenTopoV orden = OrdenTopoVCodec.parse(unwrapped.payload());
 		store.logEvent(runId, "IN", "OrdenTopoV", frame.operation(), "recibido",
 				"folioPack=" + orden.folioPack() + " ordenes=" + orden.orders().size()
@@ -446,25 +483,64 @@ public final class SpeiSession implements Runnable {
 					LocalDate.now(), config.ownEntityIndex(), config.ownEntityCode(),
 					config.minosEntityIndex(), config.minosEntityCode(),
 					1, 0, false, new BigDecimal("100.00"), 1, "SIMU" + System.currentTimeMillis(),
-					detail, valid);
-			byte[] abonoV = AbonosCodec.buildAbonoV(spec, identity.privateKey());
-
-			AbonosCodec.AbonoTRef abonoT = new AbonosCodec.AbonoTRef(
-					config.minosEntityIndex(), config.minosEntityCode(), 1, (short) 1);
-			byte[] payload = AbonosCodec.buildPayload(
-					LocalDate.now(), 1, abonoT, new BigDecimal("100.00"), abonoV,
-					new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.ZERO);
-
-			byte[] body = WireFraming.buildEncryptedSignedPartitioned(payload, identity.privateKey(),
-					sessionKey, sessionIv);
-			synchronized (writeLock) {
-				Frame.of(SpeiProtocol.OP_ABONOS, body).writeTo(out);
-			}
-			store.logEvent(runId, "OUT", "Abonos", SpeiProtocol.OP_ABONOS,
-					valid ? "enviado-valido" : "enviado-invalido", null, body);
-			logger.info("[SPEI] >> Abonos ({})", valid ? "contenido válido" : "contenido deliberadamente inválido");
+					detail, valid ? AbonosCodec.SignatureMode.VALIDA : AbonosCodec.SignatureMode.VACIA);
+			sendAbono(spec, valid ? "enviado-valido" : "enviado-invalido",
+					valid ? "contenido válido" : "contenido deliberadamente inválido");
 		} catch (Exception e) {
 			logger.error("[SPEI] No fue posible mandar el abono de prueba: {}", e.getMessage(), e);
 		}
+	}
+
+	/**
+	 * Manda un abono de cualquier tipo de pago del catálogo ({@link mx.endcom.hermes.banxicosim.validation.PaymentType}),
+	 * con clave de rastreo y modo de firma configurables -- generaliza {@link #sendTestAbono} más
+	 * allá del tipo 01 hardcodeado, para las specs 002 (devoluciones), 004 (firmas) y 006 (folio
+	 * duplicado). {@code trackingKey}, si es {@code null}, se autogenera igual que
+	 * {@link #sendTestAbono}.
+	 */
+	public void sendCustomAbono(int paymentType, String trackingKey, java.util.Map<String, String> fields,
+			AbonosCodec.SignatureMode signatureMode) throws Exception {
+		if (!alive) {
+			throw new IllegalStateException("No hay sesión SPEI viva todavía, no se puede mandar Abonos");
+		}
+		mx.endcom.hermes.banxicosim.validation.PaymentType type =
+				mx.endcom.hermes.banxicosim.validation.PaymentType.byCode(paymentType);
+		if (type == null) {
+			throw new IllegalArgumentException("Tipo de pago " + paymentType + " fuera del catálogo real SPEI");
+		}
+		String detail = type.buildDetail(fields);
+		String key = (trackingKey == null || trackingKey.isBlank())
+				? "SIMU" + System.currentTimeMillis()
+				: trackingKey;
+		AbonosCodec.AbonoVSpec spec = new AbonosCodec.AbonoVSpec(
+				LocalDate.now(), config.ownEntityIndex(), config.ownEntityCode(),
+				config.minosEntityIndex(), config.minosEntityCode(),
+				1, 0, false, new BigDecimal("100.00"), paymentType, key, detail, signatureMode);
+		sendAbono(spec, "enviado", "tipoPg=" + paymentType + ", firma=" + signatureMode);
+	}
+
+	private void sendAbono(AbonosCodec.AbonoVSpec spec, String logResult, String logDescription) throws Exception {
+		byte[] abonoV = AbonosCodec.buildAbonoV(spec, identity.privateKey());
+
+		AbonosCodec.AbonoTRef abonoT = new AbonosCodec.AbonoTRef(
+				config.minosEntityIndex(), config.minosEntityCode(), 1, (short) 1);
+		byte[] payload = AbonosCodec.buildPayload(
+				LocalDate.now(), 1, abonoT, new BigDecimal("100.00"), abonoV,
+				new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.ZERO);
+
+		// Spec 001 (lado de envío): con maxMessageLength por defecto (65535, ver SimConfig), esto
+		// siempre produce exactamente 1 frame -- mismo comportamiento de siempre. Solo se parte en
+		// varios si config.maxMessageLength() se baja a propósito para probar el reensamblado real
+		// del lado de minos.
+		java.util.List<byte[]> frames = WireFraming.buildEncryptedSignedPartitionedFrames(payload,
+				identity.privateKey(), sessionKey, sessionIv, config.maxMessageLength());
+		synchronized (writeLock) {
+			for (byte[] frameBody : frames) {
+				Frame.of(SpeiProtocol.OP_ABONOS, frameBody).writeTo(out);
+			}
+		}
+		store.logEvent(runId, "OUT", "Abonos", SpeiProtocol.OP_ABONOS, logResult, null, frames.get(0));
+		logger.info("[SPEI] >> Abonos ({}{})", logDescription,
+				frames.size() > 1 ? ", partido en " + frames.size() + " frames (spec 001)" : "");
 	}
 }

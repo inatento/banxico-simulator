@@ -38,3 +38,13 @@ db.path=data/banxicosim
 
 # Usuario que el simulador reporta en LoginMessage/SmLoginReq (no se valida contra nada real).
 spei.user=BXCOTEST
+
+# Spec 008: si es true, MsjCatalogos se manda con catalogos sinteticos poblados (institucion,
+# tipo de cuenta) en vez del cuerpo vacio de v1. No hay evidencia de que minos reaccione distinto
+# -- ver specs/008-msjcatalogos-contenido-real.md "Preguntas abiertas".
+catalogos.poblados=false
+
+# Spec 001: valor grande (65535, default) = comportamiento de siempre, sin particion real.
+# Bajarlo (ej. 200) fuerza que minos parta de verdad sus propios envios hacia el simulador, y que
+# el simulador parta los suyos -- es el mismo valor que EnSesion le declara a minos.
+wire.maxMessageLength=65535

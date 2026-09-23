@@ -45,6 +45,11 @@ public final class SimConfig {
 		defaults.setProperty("minos.certificateNumber", "0000000002");
 		defaults.setProperty("db.path", "data/banxicosim");
 		defaults.setProperty("spei.user", "BXCOTEST");
+		defaults.setProperty("catalogos.poblados", "false"); // spec 008: MsjCatalogos con contenido real
+		// Spec 001: valor grande (65535) = comportamiento de siempre, minos nunca necesita partir
+		// lo que le manda ni el simulador lo suyo. Bajarlo fuerza partición real de ambos lados --
+		// es el mismo valor que se declara en EnSesion, que minos usa para decidir si fragmenta.
+		defaults.setProperty("wire.maxMessageLength", "65535");
 
 		Properties props = new Properties(defaults);
 		String configPath = System.getProperty("config", "config/simulator.properties");
@@ -125,5 +130,17 @@ public final class SimConfig {
 
 	public String speiUser() {
 		return props.getProperty("spei.user");
+	}
+
+	/** Spec 008: si {@code true}, {@code MsjCatalogos} se manda con catálogos sintéticos
+	 *  poblados en vez del cuerpo vacío de v1 -- ver {@code MsjCatalogosCodec.syntheticCatalogs()}. */
+	public boolean catalogosPoblados() {
+		return Boolean.parseBoolean(props.getProperty("catalogos.poblados"));
+	}
+
+	/** Spec 001: el mismo valor que se declara en {@code EnSesion} y que rige cuándo el simulador
+	 *  parte sus propios envíos -- ver {@code WireFraming.buildEncryptedSignedPartitionedFrames}. */
+	public int maxMessageLength() {
+		return Integer.parseInt(props.getProperty("wire.maxMessageLength"));
 	}
 }
