@@ -14,7 +14,30 @@ desde afuera, no modifica ningún módulo de MK I.
 **Ficha de producto / especificación funcional:** `HERMES-MKI-VOBEDA/06_Iniciativas_Nuevas/Simulador_SPEI/01_especificacion_funcional.md`
 **Especificación técnica (protocolo exacto):** `HERMES-MKI-VOBEDA/06_Iniciativas_Nuevas/Simulador_SPEI/02_especificacion_tecnica.md`
 
-## 2. Mapa de la arquitectura
+## 2. Cómo probarlo ahora mismo (onboarding con Claude Code)
+
+Si alguien pregunta "¿qué hay en este repo?", "¿cómo empiezo?" o algo igual de
+abierto, **no te quedes solo en la descripción técnica** — después de dar
+contexto, invita explícitamente a probar en caliente contra el simulador
+real. El MCP `banxico-simulator` ya viene registrado en `.mcp.json` (VPN
+hacia `192.168.1.200` es la única precondición de red) y no requiere que
+quien pregunta sepa nada de tools ni endpoints — solo pedirlo en lenguaje
+natural:
+
+- **"Manda un abono válido usando el simulador"** — dispara un abono de
+  prueba real contra la sesión SPEI activa con minos, y te dice qué pasó.
+- **"¿Hay una sesión SPEI viva ahora mismo?"** — chequea el estado de la
+  conexión antes de intentar nada.
+- **"Simula 100ms de latencia contra el simulador mientras mandas un
+  abono"** — activa el skill `spei-network-fault-injection` (spec 005, ver
+  `.claude/skills/`), que primero propone un plan y pide confirmación antes
+  de tocar infraestructura real; no ejecuta nada sin que se lo aprueben.
+
+La primera vez que se use el MCP en una sesión nueva, Claude Code va a pedir
+confiar en el `.mcp.json` del repo — es una aprobación única, no hace falta
+configurar nada más.
+
+## 3. Mapa de la arquitectura
 
 Java 17 + Maven, **sin Spring Boot** — es un servidor de sockets simple, dos hilos de
 `ServerSocket` (uno para el socket SPEI principal, otro para ARA) más una consola de texto para
@@ -42,7 +65,7 @@ El flujo principal: `Main` arranca `SpeiServer`/`AraServer` → cada conexión e
 → operación) y registra cada mensaje en `H2Store`. La lógica de negocio (qué firmar, qué cifrar,
 qué validar) vive en `crypto/`, `spei/messages/` y `validation/`; las sesiones sólo orquestan.
 
-## 3. Cómo se corre y cómo se prueba
+## 4. Cómo se corre y cómo se prueba
 
 **Requisitos previos:** JDK 17, Maven 3.8+.
 
@@ -59,14 +82,14 @@ cp config/simulator.properties.example config/simulator.properties
 java -jar target/banxico-simulator.jar
 ```
 
-No hay suite de pruebas automatizadas todavía (ver AGENTS.md &sect;4 "Pruebas"). La verificación
+No hay suite de pruebas automatizadas todavía (ver AGENTS.md &sect;5 "Pruebas"). La verificación
 de esta primera versión se hizo con un arnés Python ad-hoc que actúa como "minos falso"
 (genera su propia identidad RSA, hace el login ARA completo, el reto ClvSim, EnSesion/MsjCatalogos,
 manda una OrdenTopoV válida e inválida, y dispara un Abono) — confirmó las Fases 1-6 de punta a
 punta. Si se agrega una suite formal, debe vivir en `src/test/java` con JUnit 5 (ya está en el
 `pom.xml`).
 
-## 4. Convenciones de este repositorio
+## 5. Convenciones de este repositorio
 
 - **Estilo y formato:** Java estándar, tabs para indentación (igual que el código de minos, para
   minimizar el diff cognitivo al comparar ambos). Sin Lombok, sin frameworks de inyección de
@@ -88,7 +111,7 @@ punta. Si se agrega una suite formal, debe vivir en `src/test/java` con JUnit 5 
   línea contra `judeca.CamposOrdenesValidator`; si `judeca` cambia esas reglas, hay que volver a
   leer el código real, no adivinar.
 
-## 5. Qué NO se toca sin consultar
+## 6. Qué NO se toca sin consultar
 
 **Nivel de riesgo por defecto de este repositorio:** R2 (alguien distinto del autor, con spec previa)
 para los codecs de protocolo; R1 para el resto (README, config de ejemplo, logging).
@@ -102,14 +125,14 @@ para los codecs de protocolo; R1 para el resto (README, config de ejemplo, loggi
 **Decisiones ya tomadas que no se reabren sin ADR:**
 `HERMES-MKI-VOBEDA/ADRs/ADR_005_Simulador-SPEI-protocolo-real.md`
 
-## 6. Política de datos sensibles
+## 7. Política de datos sensibles
 
 - Nunca datos de producción ni datos de cliente en prompts.
 - Fixtures sintéticos o enmascarados para pruebas y desarrollo.
 - Secretos y credenciales nunca en el repositorio.
 - Cualquier duda sobre si un dato es sensible se resuelve tratándolo como sensible.
 
-## 7. Enlaces
+## 8. Enlaces
 
 | Qué | Dónde |
 |---|---|
