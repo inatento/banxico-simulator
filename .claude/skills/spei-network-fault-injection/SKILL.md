@@ -1,0 +1,160 @@
+---
+name: spei-network-fault-injection
+description: Diseña y ejecuta pruebas de fault injection de RED (latencia, jitter, pérdida de paquetes, reordenamiento, duplicación, corte abrupto de conexión en un punto del protocolo, throttling asimétrico, fragmentación MTU) contra el contenedor real del simulador SPEI (banxico-simulator), implementando lo que spec 005 dejó sin construir en código -- vía tc netem/ss a nivel de infraestructura, sin tocar el código Java del simulador. Úsalo siempre que el usuario mencione "spec 005", "variaciones de red", "simular latencia/jitter/pérdida de paquetes contra el simulador", "cortar la conexión de minos", "probar el timeout de minos", o pida automatizar/diseñar pruebas de red repetibles para banxico-simulator -- incluso si no menciona explícitamente "netem" o "tc". NO uses este skill para variaciones de contenido de abono (tipo de pago, firma corrupta, folio duplicado) ni campañas de carga/volumen (spec 012) -- esos son otro alcance, fuera de este skill.
+---
+
+# SPEI network fault injection (spec 005)
+
+## Por qué existe este skill
+
+`specs/005-variaciones-de-red.md` describe siete variaciones de red que se
+querían poder simular contra el simulador SPEI, pero **nunca se implementaron
+en el código del simulador** -- no hay ningún endpoint ni decorator para esto,
+confirmado contra el código fuente. La spec proponía construirlo como una capa
+de aplicación dentro de `SpeiSession`/`AraSession`. Este skill logra el mismo
+objetivo *sin escribir ni una línea de código Java*, aplicando fault injection
+real a nivel de red (kernel Linux, `tc netem`) contra el contenedor Docker que
+ya corre el simulador. Es más fiel que un decorator simulado -- es pérdida de
+paquetes y latencia reales, no una aproximación en software de aplicación.
+
+El simulador real vive en el host `192.168.1.200`, alcanzable por VPN, en el
+contenedor `banxico-simulator` (nombre fijo, ver `docker-compose.yml`). Esto
+es infraestructura real conectada a un cliente real (minos) -- no un sandbox
+descartable. Trátalo con el mismo cuidado que tocar producción.
+
+## Regla de autonomía (no negociable)
+
+Este skill tiene dos fases separadas y **nunca las saltes ni las combines**:
+
+1. **Diseñar y proponer.** Genera el plan completo -- qué comando(s) de
+   `netem.sh` vas a correr, con qué parámetros exactos, contra qué sesión,
+   qué escenario MCP vas a disparar durante la falla inyectada (si aplica), y
+   el plan de limpieza correspondiente. Muéstraselo al usuario en texto claro
+   ANTES de ejecutar nada contra el contenedor real.
+2. **Ejecutar, solo tras confirmación explícita del usuario.** Una vez que
+   confirme, corre el plan paso a paso, observa el resultado, y **siempre**
+   ejecuta la limpieza al final -- incluso si el escenario falla a la mitad o
+   el usuario cancela después de aplicar el qdisc.
+
+Nunca apliques un qdisc netem, un reset de conexión, ni ningún cambio de MTU
+sin haber mostrado el plan primero y recibido un "sí"/"adelante"/equivalente
+explícito. Una pregunta genérica del usuario ("¿cómo simularía yo latencia?")
+es una solicitud de diseño, no de ejecución -- responde con el plan, no lo
+ejecutes de una vez.
+
+## Flujo operativo
+
+### 1. Detectar el contenedor
+
+```bash
+bash scripts/netem.sh detect
+```
+
+Si falla porque el host no es alcanzable directamente desde donde corre
+Claude Code, pide al usuario confirmar la ruta de acceso y exporta
+`SPEI_SIM_RUNNER="ssh <usuario>@192.168.1.200"` antes de reintentar -- el
+script antepone ese valor a cada comando `docker`. No asumas credenciales SSH
+por tu cuenta; pregúntalas si `detect` falla.
+
+### 1.5. Revisar el lock de sesión única
+
+El simulador solo admite **una prueba de fault-injection de red a la vez** --
+igual que en producción solo existe una sesión entre Hermes y Banxico, así que
+es intencional que esto sea bloqueante, no una limitación a rodear. `detect`
+ya muestra el estado del lock (`bash scripts/netem.sh lock-status`). Si está
+`OCUPADO`, el reporte incluye quién lo tomó (`owner`), para qué escenario, y
+cuándo -- comunícaselo al usuario y **no continúes** diseñando un plan que no
+se puede ejecutar todavía. No fuerces la liberación del lock (`docker rm -f
+spei-fault-lock` a mano) solo porque falló la adquisición -- eso le quitaría
+la prueba a quien la esté corriendo. Solo libéralo si el usuario confirma
+explícitamente que esa persona ya terminó o que el lock quedó huérfano por un
+fallo previo sin limpieza.
+
+### 2. Confirmar estado de la sesión SPEI
+
+Usa las tools MCP `simulator_health` y `simulator_session` (ya registradas en
+esta sesión, servidor `banxico-simulator`) antes de diseñar cualquier
+escenario que dependa de una sesión viva (todos excepto los que solo tocan
+MTU/latencia sin disparar tráfico de aplicación). Si no hay sesión viva y el
+escenario la necesita, dilo en el plan como precondición pendiente -- no
+esperes en silencio a que aparezca.
+
+### 3. Elegir el escenario y mapearlo a comandos
+
+Lee `references/spec-005-scenarios.md` -- ahí está la tabla completa de las
+siete variaciones de spec 005, con el comando exacto de `netem.sh` para cada
+una (o el procedimiento alterno para las dos que no son netem simple: corte
+abrupto en punto nombrado, y throttling asimétrico). Cita los valores de
+ejemplo de la spec (`delay 100ms 20ms`, `loss` con probabilidad `p`,
+`cortarEn: "post-ClvSim"`, etc.) cuando el usuario no dé parámetros propios.
+
+Si el usuario pide combinar variaciones (p.ej. latencia + pérdida +
+reordenamiento a la vez), es válido -- netem acepta múltiples parámetros en
+un solo `tc qdisc add ... netem <args combinados>`. Inclúyelo así en el plan.
+
+### 4. Presentar el plan
+
+Estructura el plan que le muestras al usuario así, siempre:
+
+```
+## Plan: <nombre del escenario>
+**Qué simula:** <una línea, en términos de spec 005>
+**Precondición:** <sesión viva sí/no, estado actual>
+**Comando(s) a ejecutar:**
+  1. <comando netem.sh exacto>
+  2. <acción MCP a disparar durante la falla, si aplica -- ej. simulator_send_abono_valido>
+  3. <cómo se observará el resultado -- session/test-run-events>
+**Limpieza garantizada:** <comando(s) de rollback, siempre incluidos aunque el usuario no los pida>
+**Riesgo:** <qué tan disruptivo es -- ej. "puede tumbar la sesión activa de minos", "solo latencia, no debería cortar nada">
+```
+
+Espera confirmación explícita antes de seguir.
+
+### 5. Ejecutar y observar
+
+- Aplica el/los comando(s) con `scripts/netem.sh apply ...` (o el
+  procedimiento manual de la sección correspondiente en el reference para
+  throttling asimétrico o corte abrupto). `apply` y `reset-conn` toman el
+  lock de sesión única automáticamente -- si alguien más lo tiene, el
+  comando falla con el detalle de quién y para qué, en vez de aplicar nada.
+  Para el procedimiento manual de throttling asimétrico (que no pasa por
+  `apply`), toma el lock a mano primero: `scripts/netem.sh lock-acquire
+  "throttling asimétrico"`.
+- Dispara el tráfico de prueba necesario vía las tools MCP existentes
+  (`simulator_send_abono_valido`, etc.) si el escenario lo requiere.
+- Observa el efecto con `simulator_session` y/o
+  `simulator_test_run_events` -- reporta lo que realmente pasó, no solo que
+  el comando no falló.
+
+### 6. Limpieza garantizada
+
+Corre `bash scripts/netem.sh clean` **siempre**, sin excepción, al terminar
+la observación -- exitoso, fallido, o si el usuario interrumpe a mitad de
+camino. Es idempotente (seguro llamarlo aunque ya esté limpio). No dejes al
+simulador con un qdisc aplicado entre una prueba y otra: la siguiente persona
+que use el simulador (o tú mismo en la siguiente prueba) heredaría la
+degradación sin saberlo. `clean` también libera el lock de sesión única --
+si lo tomaste a mano (throttling asimétrico), corre `scripts/netem.sh
+lock-release` como último paso si por alguna razón no pasas por `clean`.
+
+Si el escenario fue un corte abrupto (`reset-conn`), no hay qdisc que limpiar
+-- confirma solo que la sesión murió como se esperaba (ver
+`references/spec-005-scenarios.md`); el lock se libera solo al final de ese
+comando.
+
+## Notas honestas sobre el enfoque
+
+- Esto **no** implementa spec 005 tal como fue diseñada (decorator de
+  aplicación en Java) -- logra la misma intención por otro mecanismo. Dilo si
+  el usuario compara el resultado contra los criterios de aceptación
+  originales de la spec, para que no asuma que el código del simulador
+  cambió.
+- Un qdisc en `eth0` del contenedor afecta **ambas direcciones** salvo que
+  uses el procedimiento de throttling asimétrico -- si el usuario pide "solo
+  lento hacia minos" o viceversa, acláralo antes de prometer un plan
+  simétrico.
+- La pérdida de paquetes con `loss` de netem es pérdida real a nivel de
+  socket TCP -- para minos, un mensaje SPEI perdido probablemente se percibe
+  como timeout de lectura, no como algo que pueda "reintentar" a nivel de
+  aplicación (spec 005 ya anotaba esta ambigüedad, ligada a que spec 001 de
+  particionado real tampoco resuelve retransmisión granular).
