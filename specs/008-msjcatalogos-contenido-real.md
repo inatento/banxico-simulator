@@ -17,7 +17,7 @@ real (nombres de catálogo, formatos, columnas y valores poblados).
 ## Fuera de alcance
 
 - Generar catálogos "reales" con datos de producción — deben ser sintéticos, coherentes con la
-  política de datos sensibles del repo (AGENTS.md §6).
+  política de datos sensibles del repo (AGENTS.md §7).
 
 ## Diseño propuesto
 

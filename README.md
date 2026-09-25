@@ -180,7 +180,7 @@ Además de los dos sockets del protocolo SPEI/ARA (que sólo minos consume) y la
 stdin, el simulador expone una **API de control HTTP** — un tercer puerto, sin relación con el
 protocolo real, pensado para disparar y observar corridas de prueba con clientes HTTP simples en
 vez de la consola. Está implementada con `com.sun.net.httpserver.HttpServer` del JDK (cero
-dependencias nuevas, ver AGENTS.md &sect;4). Puerto configurable en `config/simulator.properties`
+dependencias nuevas, ver AGENTS.md &sect;5). Puerto configurable en `config/simulator.properties`
 (`control.port`, default `8089`).
 
 | Método | Ruta | Qué hace |
@@ -247,7 +247,7 @@ contra el jar real.
   `OrderFieldValidator.setValidInstitucion/setValidTipoCuenta`.
 - **`Abonos` de prueba:** sólo hay un escenario válido y uno inválido (RFC roto) cableados en
   `SpeiSession.sendTestAbono`. Ampliar el catálogo de escenarios es sencillo (mismo patrón).
-- **Sin suite de pruebas automatizada** (JUnit) todavía — ver AGENTS.md &sect;3.
+- **Sin suite de pruebas automatizada** (JUnit) todavía — ver AGENTS.md &sect;4.
 
 ### Decisiones donde la especificación no era 100% explícita
 
@@ -279,7 +279,7 @@ Encontrados conectando una instancia real de minos (no el arnés Python) contra 
 desplegado en `192.168.1.52`, comparando directamente contra el código fuente de minos. Los tres
 tocan codecs de protocolo (`spei/messages/*`, `spei/SpeiSession.java`) — **riesgo R2, no mergeados
 a la ligera**: quedan documentados aquí para revisión de Miguel Zavala antes de darlos por
-definitivos, ver AGENTS.md &sect;5.
+definitivos, ver AGENTS.md &sect;6.
 
 1. **Padding RSA incorrecto en el reto `ClvSim`.** `RsaCipher`/`ClvSimCodec` cifraban la llave de
    sesión con `RSA/ECB/PKCS1Padding` (el padding que usa el resto del protocolo), pero

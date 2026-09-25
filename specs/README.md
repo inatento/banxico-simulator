@@ -17,7 +17,7 @@ herramienta de prueba misma**, que no existen en el protocolo SPEI real.
   criterio de aceptación mínimo. Se cierran en un commit posterior que las resuelve, citando el
   spec que actualiza.
 - Cambios al protocolo/wire format del simulador (no a su tooling de pruebas) siguen siendo R2 —
-  ver AGENTS.md §5, dueño de spec: Miguel Zavala.
+  ver AGENTS.md §6, dueño de spec: Miguel Zavala.
 
 ## Índice
 

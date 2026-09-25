@@ -16,26 +16,51 @@ desde afuera, no modifica ningún módulo de MK I.
 
 ## 2. Cómo probarlo ahora mismo (onboarding con Claude Code)
 
-Si alguien pregunta "¿qué hay en este repo?", "¿cómo empiezo?" o algo igual de
-abierto, **no te quedes solo en la descripción técnica** — después de dar
-contexto, invita explícitamente a probar en caliente contra el simulador
-real. El MCP `banxico-simulator` ya viene registrado en `.mcp.json` (VPN
-hacia `192.168.1.200` es la única precondición de red) y no requiere que
-quien pregunta sepa nada de tools ni endpoints — solo pedirlo en lenguaje
-natural:
+Quien pregunte "¿qué hay en este repo?", "¿cómo empiezo?" o algo igual de
+abierto puede no tener ningún trasfondo técnico — este simulador está
+pensado para poder probarse solo clonando el repo y pidiéndoselo a Claude en
+español normal, sin saber programar. Responde con ese público en mente:
 
-- **"Manda un abono válido usando el simulador"** — dispara un abono de
-  prueba real contra la sesión SPEI activa con minos, y te dice qué pasó.
-- **"¿Hay una sesión SPEI viva ahora mismo?"** — chequea el estado de la
-  conexión antes de intentar nada.
-- **"Simula 100ms de latencia contra el simulador mientras mandas un
-  abono"** — activa el skill `spei-network-fault-injection` (spec 005, ver
-  `.claude/skills/`), que primero propone un plan y pide confirmación antes
-  de tocar infraestructura real; no ejecuta nada sin que se lo aprueben.
+- **No te quedes solo en la descripción técnica** — después de dar contexto,
+  invita explícitamente a probar algo real, con un ejemplo concreto que
+  pueda copiar y pegar tal cual.
+- **No uses siglas ni jerga sin explicarlas la primera vez que las
+  menciones en una respuesta** — en particular, evita decir "MCP" (para la
+  persona que prueba esto, la conexión con el simulador ya viene lista, no
+  necesita saber cómo se llama ni cómo funciona) y no digas "VPN" a secas
+  (explica que su computadora necesita estar conectada a la red interna de
+  la empresa, igual que cuando alguien se conecta desde su casa a los
+  sistemas de la oficina).
+- Trátalo como si fuera la primera vez que esa persona usa Claude Code para
+  algo así: nombra la acción, no la herramienta.
 
-La primera vez que se use el MCP en una sesión nueva, Claude Code va a pedir
-confiar en el `.mcp.json` del repo — es una aprobación única, no hace falta
-configurar nada más.
+Ejemplos que puedes ofrecer tal cual, en lenguaje natural:
+
+- **"¿Hay una sesión activa con el banco ahora mismo?"** — revisa si el
+  simulador está conectado con `minos` (el módulo que se está probando)
+  antes de intentar cualquier otra cosa.
+- **"Manda un pago de prueba usando el simulador"** — dispara un pago (un
+  "abono") de prueba real y cuenta qué pasó.
+- **"Simula que la red va lenta (100ms de retraso) mientras mandas un pago
+  de prueba"** — activa el skill `spei-network-fault-injection` (basado en
+  spec 005, ver `.claude/skills/`): antes de tocar nada real, propone el
+  plan completo en español y espera que la persona lo apruebe.
+
+Dos cosas tienen que estar listas para que esto funcione — si algo no
+responde, revisa esto antes que nada:
+
+1. **La computadora tiene que estar conectada a la red interna donde vive el
+   simulador** (normalmente por VPN — la misma conexión que se usa para
+   entrar a otros sistemas internos de la empresa desde fuera de la
+   oficina). Sin eso, es como intentar llamar a alguien sin señal: no hay
+   error claro, simplemente no responde.
+2. **Claude Code debe abrirse dentro de la carpeta `banxico-simulator/`
+   misma, no en una carpeta que solo la contenga** — si se abre un nivel
+   arriba, la conexión con el simulador no se carga y ninguno de los
+   ejemplos de arriba va a funcionar. La primera vez que sí se abre en el
+   lugar correcto, Claude Code pregunta si confía en la configuración de
+   este proyecto — hay que aceptar ese aviso una sola vez; después queda
+   recordado.
 
 ## 3. Mapa de la arquitectura
 
@@ -82,7 +107,8 @@ cp config/simulator.properties.example config/simulator.properties
 java -jar target/banxico-simulator.jar
 ```
 
-No hay suite de pruebas automatizadas todavía (ver AGENTS.md &sect;5 "Pruebas"). La verificación
+No hay suite de pruebas automatizadas todavía (ver AGENTS.md &sect;5 "Convenciones de este
+repositorio", bullet "Pruebas — qué se espera de un cambio"). La verificación
 de esta primera versión se hizo con un arnés Python ad-hoc que actúa como "minos falso"
 (genera su propia identidad RSA, hace el login ARA completo, el reto ClvSim, EnSesion/MsjCatalogos,
 manda una OrdenTopoV válida e inválida, y dispara un Abono) — confirmó las Fases 1-6 de punta a
