@@ -2,8 +2,8 @@
   "mcpServers": {
     "banxico-simulator": {
       "type": "stdio",
-      "command": "node",
-      "args": ["mcp-server/index.js"],
+      "command": "bash",
+      "args": ["mcp-server/start.sh"],
       "env": {
         "SIMULATOR_URL": "http://192.168.1.200:8089"
       }

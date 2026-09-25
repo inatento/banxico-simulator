@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__banxico-simulator__simulator_health",
+      "mcp__banxico-simulator__simulator_session",
+      "mcp__banxico-simulator__simulator_list_test_runs",
+      "mcp__banxico-simulator__simulator_test_run_events",
+      "mcp__banxico-simulator__simulator_send_abono_valido",
+      "mcp__banxico-simulator__simulator_send_abono_invalido",
+      "mcp__banxico-simulator__simulator_send_abono"
+    ]
+  }
+}
